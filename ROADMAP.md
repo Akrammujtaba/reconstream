@@ -10,7 +10,7 @@ Planned improvements, roughly smallest first. Each one is a self-contained chang
 - [ ] **Generator CLI flag for a single fault type.** `--only DUPLICATE_CHARGE` to demo one scenario at a time.
 - [ ] **Grafana panel: exceptions resolved vs. opened, by type.** Edit `infra/grafana/dashboards/reconstream.json`.
 - [ ] **dbt test: no booking has both DUPLICATE_CHARGE and MISSING_PAYMENT open.** Singular test in `dbt/tests/`.
-- [ ] **Webhook: reject events dated in the future** (more than 5 minutes ahead of server time). Add a test case.
+- [x] **Webhook: reject events dated in the future** (more than 5 minutes ahead of server time). Add a test case.
 - [ ] **Evaluator: CSV output option** alongside the markdown table.
 
 ## Medium (a few sessions)

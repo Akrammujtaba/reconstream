@@ -91,3 +91,20 @@ def test_metrics_endpoint(client_and_producer):
     client, _ = client_and_producer
     post(client, event())
     assert "webhook_events_total" in client.get("/metrics/").text
+
+
+def test_event_dated_in_the_future_goes_to_dlq(client_and_producer):
+    from datetime import datetime, timedelta, timezone
+    client, producer = client_and_producer
+    future = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+    r = post(client, event(occurred_at=future))
+    assert r.status_code == 400
+    assert [(t, v["reason"]) for t, _, v in producer.sent] == [("payments.dlq", "occurred_in_future")]
+
+
+def test_small_clock_skew_is_tolerated(client_and_producer):
+    from datetime import datetime, timedelta, timezone
+    client, producer = client_and_producer
+    slightly_ahead = (datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat()
+    assert post(client, event(occurred_at=slightly_ahead)).status_code == 202
+    assert producer.sent[0][0] == "payments.raw"

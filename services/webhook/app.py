@@ -13,7 +13,7 @@ import hmac
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Literal, Protocol
 
 from fastapi import FastAPI, Request
@@ -74,7 +74,11 @@ def sign(secret: str, body: bytes) -> str:
 
 
 def create_app(producer: Producer, secret: str, payments_topic: str = "payments.raw",
-               dlq_topic: str = "payments.dlq") -> FastAPI:
+               dlq_topic: str = "payments.dlq",
+               max_clock_skew: timedelta = timedelta(minutes=5)) -> FastAPI:
+    """max_clock_skew: how far in the future occurred_at may be before the event is
+    rejected. A future timestamp would push the event-time watermark ahead of real
+    time and make every open booking look overdue, so it must never reach Kafka."""
     app = FastAPI(title="ReconStream payment webhooks")
     app.mount("/metrics", make_asgi_app())
 
@@ -115,8 +119,15 @@ def create_app(producer: Producer, secret: str, payments_topic: str = "payments.
                           for e in exc.errors()]
                 return reject(raw, "contract_violation", detail)
 
+            now = datetime.now(timezone.utc)
+            if event.occurred_at > now + max_clock_skew:
+                return reject(raw, "occurred_in_future", {
+                    "occurred_at": event.occurred_at.isoformat(),
+                    "server_time": now.isoformat(),
+                })
+
             record = event.model_dump(mode="json")
-            record["received_at"] = datetime.now(timezone.utc).isoformat()
+            record["received_at"] = now.isoformat()
             try:
                 producer.send(payments_topic, event.booking_id, record)
             except Exception:
@@ -140,5 +151,6 @@ def app_from_env() -> FastAPI:
         os.environ.get("WEBHOOK_SECRET", "dev-secret"),
         os.environ.get("PAYMENTS_TOPIC", "payments.raw"),
         os.environ.get("DLQ_TOPIC", "payments.dlq"),
+        timedelta(seconds=int(os.environ.get("MAX_CLOCK_SKEW_SECONDS", "300"))),
     )
 
