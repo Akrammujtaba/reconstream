@@ -1,0 +1,8 @@
+event_id,event_type,payment_id,booking_id,amount_cents,currency,occurred_at,received_at,kafka_ts,ingested_at
+evt_1,payment.captured,pay_1,bk_clean,25000,USD,2026-01-01 10:00:10,2026-01-01 10:00:12,2026-01-01 10:00:12,2026-01-01 10:00:15
+evt_2,payment.captured,pay_2,bk_double,18000,EUR,2026-01-01 10:01:10,2026-01-01 10:01:30,2026-01-01 10:01:30,2026-01-01 10:01:35
+evt_3,payment.captured,pay_3,bk_double,18000,EUR,2026-01-01 10:01:40,2026-01-01 10:01:41,2026-01-01 10:01:41,2026-01-01 10:01:45
+evt_4,payment.captured,pay_4,bk_late,12000,USD,2026-01-01 10:06:30,2026-01-01 10:06:31,2026-01-01 10:06:31,2026-01-01 10:06:35
+evt_5,payment.captured,pay_5,bk_cancel,30000,USD,2026-01-01 10:04:10,2026-01-01 10:04:11,2026-01-01 10:04:11,2026-01-01 10:04:15
+evt_6,refund.succeeded,re_6,bk_cancel,15000,USD,2026-01-01 10:05:10,2026-01-01 10:05:12,2026-01-01 10:05:12,2026-01-01 10:05:15
+evt_7,payment.failed,pay_7,bk_clean,25000,USD,2026-01-01 10:00:09,2026-01-01 10:00:09,2026-01-01 10:00:09,2026-01-01 10:00:15

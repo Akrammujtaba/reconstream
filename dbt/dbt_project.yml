@@ -1,0 +1,34 @@
+name: reconstream
+version: "1.0.0"
+config-version: 2
+profile: reconstream
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+snapshot-paths: ["snapshots"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  reconstream:
+    # The Iceberg JDBC catalog has no views, so staging is inlined as CTEs.
+    staging:
+      +materialized: ephemeral
+    intermediate:
+      +materialized: ephemeral
+    marts:
+      +materialized: table
+      +schema: marts
+
+seeds:
+  reconstream:
+    reference:
+      +schema: reference
+    # Small copies of the silver/gold tables, loaded only for the DuckDB CI target.
+    ci_fixtures:
+      +enabled: "{{ target.type == 'duckdb' }}"
+      silver:
+        +schema: silver
+      gold:
+        +schema: gold

@@ -1,0 +1,27 @@
+groups:
+  - name: reconstream
+    rules:
+      - alert: ReconStreamStalled
+        expr: time() - reconstream_last_batch_timestamp_seconds > 120
+        for: 1m
+        labels: {severity: page}
+        annotations:
+          summary: "Streaming reconciliation has not finished a batch in 2+ minutes"
+      - alert: ReconWatermarkLagging
+        expr: reconstream_watermark_lag_seconds > 300
+        for: 2m
+        labels: {severity: warn}
+        annotations:
+          summary: "Event-time watermark is more than 5 minutes behind wall clock"
+      - alert: DuplicateChargesOpen
+        expr: reconstream_open_exceptions{exception_type="DUPLICATE_CHARGE"} > 0
+        for: 5m
+        labels: {severity: page}
+        annotations:
+          summary: "Customers have been double charged and not refunded for 5+ minutes"
+      - alert: WebhookRejectRateHigh
+        expr: rate(webhook_events_total{outcome="rejected"}[5m]) / rate(webhook_events_total[5m]) > 0.05
+        for: 5m
+        labels: {severity: warn}
+        annotations:
+          summary: "More than 5% of payment webhooks are failing the contract"

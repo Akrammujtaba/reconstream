@@ -1,0 +1,4 @@
+numpy<2
+pandas<2.3
+great_expectations==1.2.6
+prometheus-client==0.21.1

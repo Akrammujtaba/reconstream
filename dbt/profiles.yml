@@ -1,0 +1,18 @@
+reconstream:
+  target: trino
+  outputs:
+    trino:
+      type: trino
+      method: none
+      user: dbt
+      host: "{{ env_var('TRINO_HOST', 'localhost') }}"
+      port: "{{ env_var('TRINO_PORT', '8080') | int }}"
+      database: lake
+      schema: marts
+      http_scheme: http
+      threads: 4
+    ci:
+      type: duckdb
+      path: "{{ env_var('DBT_DUCKDB_PATH', 'target/ci.duckdb') }}"
+      schema: marts
+      threads: 4

@@ -1,0 +1,36 @@
+version: 2
+seeds:
+  - name: bookings
+    config:
+      column_types:
+        amount_cents: bigint
+        source_lsn: bigint
+        is_deleted: boolean
+        created_at: timestamp
+        confirmed_at: timestamp
+        cancelled_at: timestamp
+        updated_at: timestamp
+        ingested_at: timestamp
+  - name: payments
+    config:
+      column_types:
+        amount_cents: bigint
+        occurred_at: timestamp
+        received_at: timestamp
+        kafka_ts: timestamp
+        ingested_at: timestamp
+  - name: recon_exceptions
+    config:
+      column_types:
+        expected_amount_cents: bigint
+        actual_amount_cents: bigint
+        amount_at_risk_cents: bigint
+        payment_ids: varchar
+        payment_currency: varchar
+        booking_currency: varchar
+        due_at: timestamp
+        first_detected_at: timestamp
+        last_seen_at: timestamp
+        last_evaluated_at: timestamp
+        resolved_at: timestamp
+        reopen_count: integer

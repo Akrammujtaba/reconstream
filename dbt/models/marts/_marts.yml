@@ -1,0 +1,35 @@
+version: 2
+
+models:
+  - name: fct_recon_exceptions
+    description: Reconciliation exceptions with severity, owner, USD exposure, and timing.
+    columns:
+      - name: exception_id
+        data_tests: [unique, not_null]
+      - name: exception_type
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('exception_types')
+              field: exception_type
+      - name: status
+        data_tests:
+          - accepted_values:
+              values: ['OPEN', 'RESOLVED']
+      - name: detected_by
+        data_tests:
+          - accepted_values:
+              values: ['stream', 'batch']
+      - name: amount_at_risk_usd
+        data_tests: [not_null]
+
+  - name: fct_daily_reconciliation
+    description: One row per day of bookings, clean payments, exceptions, and open exposure.
+    columns:
+      - name: activity_date
+        data_tests: [unique, not_null]
+      - name: clean_payment_rate
+        description: Share of confirmed bookings with exactly one capture for the right amount.
+
+  - name: dim_booking_status_history
+    description: SCD2 history of booking status and amount.

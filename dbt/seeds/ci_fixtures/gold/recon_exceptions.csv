@@ -1,0 +1,6 @@
+exception_id,booking_id,exception_type,status,expected_amount_cents,actual_amount_cents,amount_at_risk_cents,booking_currency,payment_currency,payment_ids,due_at,first_detected_at,last_seen_at,last_evaluated_at,resolved_at,detected_by,reopen_count
+x1,bk_double,DUPLICATE_CHARGE,OPEN,18000,36000,18000,EUR,EUR,"pay_2,pay_3",2026-01-01 10:01:40,2026-01-01 10:01:52,2026-01-01 10:10:00,2026-01-01 10:10:00,,stream,0
+x2,bk_missing,MISSING_PAYMENT,OPEN,9000,0,9000,GBP,,,2026-01-01 10:04:01,2026-01-01 10:04:45,2026-01-01 10:10:00,2026-01-01 10:10:00,,stream,0
+x3,bk_late,MISSING_PAYMENT,RESOLVED,12000,0,12000,USD,,,2026-01-01 10:05:01,2026-01-01 10:05:40,2026-01-01 10:06:00,2026-01-01 10:06:40,2026-01-01 10:06:40,stream,0
+x4,bk_cancel,REFUND_MISMATCH,OPEN,30000,15000,15000,USD,USD,pay_5,2026-01-01 10:07:00,2026-01-01 10:07:35,2026-01-01 10:10:00,2026-01-01 10:10:00,,stream,0
+x5,bk_ghost,ORPHAN_PAYMENT,OPEN,0,7000,7000,,USD,pay_9,2026-01-02 03:00:00,2026-01-02 03:00:10,2026-01-02 03:00:10,2026-01-02 03:00:10,,batch,0

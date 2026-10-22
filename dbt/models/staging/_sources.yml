@@ -1,0 +1,26 @@
+version: 2
+
+sources:
+  - name: silver
+    description: Cleaned, de-duplicated tables written by the Spark streaming job.
+    database: "{{ target.database }}"
+    schema: silver
+    tables:
+      - name: bookings
+        description: Latest state per booking from Postgres CDC (one row per booking_id).
+        loaded_at_field: ingested_at
+        freshness:
+          warn_after: {count: 15, period: minute}
+          error_after: {count: 60, period: minute}
+      - name: payments
+        description: Payment provider events, one row per event_id (redeliveries removed).
+        loaded_at_field: ingested_at
+        freshness:
+          warn_after: {count: 15, period: minute}
+          error_after: {count: 60, period: minute}
+  - name: gold
+    database: "{{ target.database }}"
+    schema: gold
+    tables:
+      - name: recon_exceptions
+        description: One row per (booking, exception type); status moves OPEN -> RESOLVED.

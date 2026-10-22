@@ -1,0 +1,19 @@
+select
+    exception_id,
+    booking_id,
+    exception_type,
+    status,
+    expected_amount_cents,
+    actual_amount_cents,
+    amount_at_risk_cents,
+    booking_currency,
+    payment_currency,
+    payment_ids,
+    due_at,
+    first_detected_at,
+    last_seen_at,
+    last_evaluated_at,
+    resolved_at,
+    detected_by,
+    reopen_count
+from {{ source('gold', 'recon_exceptions') }}

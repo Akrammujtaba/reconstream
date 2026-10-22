@@ -1,0 +1,21 @@
+{
+  "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+  "plugin.name": "pgoutput",
+  "database.hostname": "postgres",
+  "database.port": "5432",
+  "database.user": "recon",
+  "database.password": "recon",
+  "database.dbname": "bookings",
+  "topic.prefix": "pg",
+  "table.include.list": "public.bookings",
+  "publication.name": "reconstream_pub",
+  "publication.autocreate.mode": "disabled",
+  "slot.name": "reconstream_slot",
+  "snapshot.mode": "initial",
+  "tombstones.on.delete": "false",
+  "heartbeat.interval.ms": "10000",
+  "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+  "key.converter.schemas.enable": "false",
+  "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+  "value.converter.schemas.enable": "false"
+}

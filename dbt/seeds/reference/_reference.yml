@@ -1,0 +1,14 @@
+version: 2
+seeds:
+  - name: fx_rates
+    description: Static USD conversion rates (stand-in for a daily rates feed).
+    config:
+      column_types: {currency: varchar, usd_rate: double}
+    columns:
+      - name: currency
+        data_tests: [unique, not_null]
+  - name: exception_types
+    description: Severity and owning team for each reconciliation exception.
+    columns:
+      - name: exception_type
+        data_tests: [unique, not_null]

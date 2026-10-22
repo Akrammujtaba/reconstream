@@ -1,0 +1,7 @@
+exception_type,severity,owner_team,description
+DUPLICATE_CHARGE,critical,payments-ops,Guest charged more than once for one booking
+AMOUNT_MISMATCH,high,payments-ops,Captured amount differs from the booking total
+CURRENCY_MISMATCH,high,payments-ops,Captured in a different currency than the booking
+MISSING_PAYMENT,high,payments-ops,Confirmed booking with no capture after the SLA
+REFUND_MISMATCH,high,finance-ops,Cancelled booking not refunded in full after the SLA
+ORPHAN_PAYMENT,medium,finance-ops,Money captured for a booking that does not exist
