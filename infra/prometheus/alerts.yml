@@ -20,7 +20,7 @@ groups:
         annotations:
           summary: "Customers have been double charged and not refunded for 5+ minutes"
       - alert: WebhookRejectRateHigh
-        expr: rate(webhook_events_total{outcome="rejected"}[5m]) / rate(webhook_events_total[5m]) > 0.05
+        expr: sum(rate(webhook_events_total{outcome="rejected"}[5m])) / sum(rate(webhook_events_total[5m])) > 0.05
         for: 5m
         labels: {severity: warn}
         annotations:
