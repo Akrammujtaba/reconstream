@@ -25,6 +25,11 @@ def build_spark(app_name: str, catalog: str = "lake") -> SparkSession:
         f"{prefix}.s3.access-key-id": os.environ.get("AWS_ACCESS_KEY_ID", "reconstream"),
         f"{prefix}.s3.secret-access-key": os.environ.get("AWS_SECRET_ACCESS_KEY", "reconstream-secret"),
         f"{prefix}.client.region": os.environ.get("AWS_REGION", "us-east-1"),
+        # No catalog-level table cache. foreachBatch runs each micro-batch in a cloned
+        # session with its own catalog instance, so writes made there never refresh the
+        # main session's cached tables, and reads served from that cache stay stale for
+        # as long as they keep being accessed (the cache expires on 30s of idleness).
+        f"{prefix}.cache-enabled": "false",
         "spark.sql.defaultCatalog": catalog,
         "spark.sql.session.timeZone": "UTC",
         "spark.sql.shuffle.partitions": os.environ.get("SPARK_SHUFFLE_PARTITIONS", "8"),

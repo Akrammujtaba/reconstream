@@ -49,6 +49,17 @@ An exception can only change for two reasons: new data arrived for that booking,
 
 Those windows are contiguous, so no deadline is skipped. After a restart, the first batch catches up over the full horizon.
 
+### What was the hardest bug?
+
+After making batches faster, detection silently dropped to zero while every unit test still passed. The cause was in how Spark and Iceberg cache tables:
+
+- `foreachBatch` runs each micro-batch in a **cloned Spark session** with its own catalog instance.
+- The MERGEs ran in that cloned session, but the reconciliation read the tables through the **main** session.
+- The main session's Iceberg catalog was caching the tables from startup, when they were empty. That cache only expires after 30 seconds without access.
+- While batches took 40+ seconds the cache kept expiring, so reads happened to be fresh. Once batches dropped to about 10 seconds the cache never expired, and every reconciliation read empty tables.
+
+The fix is `cache-enabled=false` on the catalog, so every read loads the current snapshot. The lesson: a performance fix can change correctness when caches have time-based expiry, so a live end-to-end measurement (the evaluator) is needed on top of unit tests.
+
 ### Why merge-on-read Iceberg tables, and what does it cost?
 
 Copy-on-write would rewrite whole data files on every MERGE. Merge-on-read writes small delete files instead, so streaming writes are cheap. The cost is read amplification: every batch adds files and delete files, and every read has to open them. So the stream itself runs `rewrite_data_files`, `rewrite_position_delete_files`, and `expire_snapshots` every 40 batches, and `reconstream_maintenance` does a fuller pass (including `rewrite_manifests`) nightly.
