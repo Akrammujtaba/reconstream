@@ -76,6 +76,7 @@ class LiveSink:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)  # one line per request is noise
     p = argparse.ArgumentParser()
     p.add_argument("--rate", type=float, default=float(os.environ.get("GEN_RATE", "2")),
                    help="new bookings per second")
