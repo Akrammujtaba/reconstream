@@ -267,6 +267,7 @@ services:
       BOOKINGS_DSN: postgresql://recon:recon@postgres:5432/bookings
       TRINO_HOST: trino
       TRINO_PORT: "8080"
+      EVAL_SINCE_MINUTES: ${EVAL_SINCE_MINUTES:-0}
     volumes:
       - ./evaluation:/out
     command: ["--out", "/out/results.md"]

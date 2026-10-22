@@ -37,3 +37,13 @@ def test_report_scores_recall_precision_latency_and_late_payments():
     assert r["latency_p50_s"] == 40
     md = to_markdown(r)
     assert "| Recall | 50.0% |" in md
+
+
+def test_since_window_excludes_older_faults():
+    truth = [
+        Truth("old", "DUPLICATE_CHARGE", "DUPLICATE_CHARGE", False, T - timedelta(hours=1)),
+        Truth("new", "DUPLICATE_CHARGE", "DUPLICATE_CHARGE", False, T),
+    ]
+    found = [Found("new", "DUPLICATE_CHARGE", "OPEN", T + timedelta(seconds=20), T)]
+    r = compute_report(truth, found, NOW, since=T - timedelta(minutes=5))
+    assert (r["injected"], r["detected"], r["latency_p50_s"]) == (1, 1, 20)

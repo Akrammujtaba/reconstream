@@ -46,11 +46,17 @@ def percentile(values: list[float], pct: float) -> float | None:
 
 
 def compute_report(truth: list[Truth], found: list[Found], now: datetime,
-                   grace: timedelta = timedelta(minutes=3)) -> dict:
-    """Only faults that became detectable at least `grace` ago are scored."""
+                   grace: timedelta = timedelta(minutes=3),
+                   since: datetime | None = None) -> dict:
+    """Only faults that became detectable at least `grace` ago are scored.
+
+    `since` limits scoring to faults (and false positives) that became due after
+    that time, to measure a steady-state window after a deploy or restart.
+    """
     cutoff = now - grace
     found_by_key = {(f.booking_id, f.exception_type): f for f in found}
-    scored = [t for t in truth if t.detectable_at <= cutoff]
+    scored = [t for t in truth if t.detectable_at <= cutoff
+              and (since is None or t.detectable_at >= since)]
 
     per_type: dict[str, dict] = defaultdict(lambda: {"injected": 0, "detected": 0, "latencies": []})
     late_ok = late_total = 0
@@ -70,7 +76,8 @@ def compute_report(truth: list[Truth], found: list[Found], now: datetime,
     # False positives: open exceptions with no matching injected fault.
     expected_keys = {(t.booking_id, t.expected_exception) for t in truth}
     open_scored = [f for f in found if f.status == "OPEN"
-                   and (f.due_at is None or f.due_at <= cutoff)]
+                   and (f.due_at is None or f.due_at <= cutoff)
+                   and (since is None or f.due_at is None or f.due_at >= since)]
     false_pos = [f for f in open_scored if (f.booking_id, f.exception_type) not in expected_keys]
 
     all_lat = [x for r in per_type.values() for x in r["latencies"]]
@@ -78,6 +85,7 @@ def compute_report(truth: list[Truth], found: list[Found], now: datetime,
     detected = sum(r["detected"] for r in per_type.values())
     return {
         "now": now,
+        "since": since,
         "injected": injected,
         "detected": detected,
         "recall": detected / injected if injected else None,
@@ -113,6 +121,7 @@ def to_markdown(r: dict, throughput: str | None = None) -> str:
     late_ok, late_total = r["late_payments_auto_resolved"]
     lines = [
         f"# ReconStream evaluation ({r['now']:%Y-%m-%d %H:%M} UTC)",
+        *([f"_Scoring faults due since {r['since']:%H:%M} UTC._", ""] if r.get("since") else []),
         "",
         "| Metric | Value |",
         "|---|---|",
@@ -154,6 +163,9 @@ def main() -> None:
     p.add_argument("--trino-host", default=os.environ.get("TRINO_HOST", "localhost"))
     p.add_argument("--trino-port", type=int, default=int(os.environ.get("TRINO_PORT", "8080")))
     p.add_argument("--grace-minutes", type=float, default=3)
+    p.add_argument("--since-minutes", type=float,
+                   default=float(os.environ.get("EVAL_SINCE_MINUTES", "0")) or None,
+                   help="only score the last N minutes (steady state after a restart)")
     p.add_argument("--out", default=os.path.join(os.path.dirname(__file__), "results.md"))
     args = p.parse_args()
 
@@ -175,8 +187,9 @@ def main() -> None:
     if n and lo and hi and hi > lo:
         throughput = f"{n / (hi - lo).total_seconds():.1f} payment events/sec sustained ({n:,} total)"
 
-    report = compute_report(truth, found, datetime.now(timezone.utc),
-                            timedelta(minutes=args.grace_minutes))
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(minutes=args.since_minutes) if args.since_minutes else None
+    report = compute_report(truth, found, now, timedelta(minutes=args.grace_minutes), since)
     md = to_markdown(report, throughput)
     print(md)
     with open(args.out, "w") as f:
