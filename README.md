@@ -4,6 +4,8 @@
 
 ![CI](https://github.com/Akrammujtaba/reconstream/actions/workflows/ci.yml/badge.svg)
 
+![ReconStream overview](docs/images/overview.png)
+
 **Stack:** Postgres CDC (Debezium) · Kafka · Spark Structured Streaming · Apache Iceberg · Trino · Airflow · dbt · Great Expectations · Prometheus/Grafana · Terraform (AWS) · Docker
 
 ---
@@ -73,6 +75,8 @@ The design reasoning (why `foreachBatch` instead of a stream-stream join, why ev
 ## Results
 
 The traffic generator injects known faults at known rates, plus realistic noise: duplicate deliveries, out-of-order delivery, failed payment attempts, malformed payloads, and payments that arrive after the SLA but are valid. Because every injected fault is recorded, detection can be measured rather than claimed.
+
+![Measured results](docs/images/results.png)
 
 Measured on a laptop (Docker Desktop, single-node Spark in local mode) after 30 minutes of generated traffic. Exact output is in the evaluator's `results.md`.
 
