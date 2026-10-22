@@ -28,6 +28,7 @@ RUN cd /opt/spark/jars && for jar in \
 COPY infra/spark/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
+COPY infra/spark/log4j2.properties /opt/spark/conf/log4j2.properties
 COPY reconstream /app/reconstream
 RUN mkdir -p /checkpoints && chown -R spark:spark /checkpoints /app
 
