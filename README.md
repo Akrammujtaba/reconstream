@@ -167,6 +167,10 @@ infra/                Postgres, Debezium, Spark, Airflow, Trino, Prometheus, Gra
 tests/                53 unit and scenario tests
 ```
 
+## What's next
+
+Planned improvements are tracked in [ROADMAP.md](ROADMAP.md).
+
 ## Taking it to production
 
 - **AWS:** `infra/terraform` provisions the S3 lake bucket, Glue catalog databases, an EMR Serverless Spark application, and least-privilege IAM. Kafka would move to MSK and Airflow to MWAA.
