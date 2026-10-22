@@ -57,7 +57,7 @@ flowchart LR
     DBT --> TR
 ```
 
-All tables are **Apache Iceberg** on S3 (MinIO locally), with the catalog in Postgres, queryable from both Spark and Trino.
+All tables are **Apache Iceberg** on S3 (SeaweedFS, an S3-compatible store, locally), with the catalog in Postgres, queryable from both Spark and Trino.
 
 ## How it works
 
@@ -106,7 +106,7 @@ The generator starts automatically at 2 bookings per second. To change the rate:
 | Airflow | http://localhost:8081 (admin / admin) |
 | Spark UI | http://localhost:4040 |
 | Trino | http://localhost:8080 |
-| MinIO console | http://localhost:9001 (minio / minio123) |
+| Object storage browser (SeaweedFS filer) | http://localhost:8888 |
 | Kafka (from host) | localhost:29092 |
 
 **Query the lakehouse:**

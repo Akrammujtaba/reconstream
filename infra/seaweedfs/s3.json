@@ -1,0 +1,11 @@
+{
+  "identities": [
+    {
+      "name": "lake-admin",
+      "credentials": [
+        {"accessKey": "reconstream", "secretKey": "reconstream-secret"}
+      ],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

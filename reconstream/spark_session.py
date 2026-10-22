@@ -1,4 +1,4 @@
-"""SparkSession wired to an Iceberg catalog (JDBC catalog in Postgres, data in S3/MinIO)."""
+"""SparkSession wired to an Iceberg catalog (JDBC catalog in Postgres, data in S3-compatible storage)."""
 
 from __future__ import annotations
 
@@ -20,10 +20,10 @@ def build_spark(app_name: str, catalog: str = "lake") -> SparkSession:
         f"{prefix}.jdbc.password": os.environ.get("ICEBERG_JDBC_PASSWORD", "recon"),
         f"{prefix}.warehouse": os.environ.get("ICEBERG_WAREHOUSE", "s3://lake/warehouse"),
         f"{prefix}.io-impl": "org.apache.iceberg.aws.s3.S3FileIO",
-        f"{prefix}.s3.endpoint": os.environ.get("S3_ENDPOINT", "http://minio:9000"),
+        f"{prefix}.s3.endpoint": os.environ.get("S3_ENDPOINT", "http://s3:8333"),
         f"{prefix}.s3.path-style-access": "true",
-        f"{prefix}.s3.access-key-id": os.environ.get("AWS_ACCESS_KEY_ID", "minio"),
-        f"{prefix}.s3.secret-access-key": os.environ.get("AWS_SECRET_ACCESS_KEY", "minio123"),
+        f"{prefix}.s3.access-key-id": os.environ.get("AWS_ACCESS_KEY_ID", "reconstream"),
+        f"{prefix}.s3.secret-access-key": os.environ.get("AWS_SECRET_ACCESS_KEY", "reconstream-secret"),
         f"{prefix}.client.region": os.environ.get("AWS_REGION", "us-east-1"),
         "spark.sql.defaultCatalog": catalog,
         "spark.sql.session.timeZone": "UTC",

@@ -11,9 +11,9 @@ x-lake-env: &lake-env
   ICEBERG_JDBC_USER: recon
   ICEBERG_JDBC_PASSWORD: recon
   ICEBERG_WAREHOUSE: s3://lake/warehouse
-  S3_ENDPOINT: http://minio:9000
-  AWS_ACCESS_KEY_ID: minio
-  AWS_SECRET_ACCESS_KEY: minio123
+  S3_ENDPOINT: http://s3:8333
+  AWS_ACCESS_KEY_ID: reconstream
+  AWS_SECRET_ACCESS_KEY: reconstream-secret
   AWS_REGION: us-east-1
   KAFKA_BOOTSTRAP: kafka:9092
   PUSHGATEWAY_URL: pushgateway:9091
@@ -80,7 +80,7 @@ services:
     restart: "no"
 
   connect:
-    image: quay.io/debezium/connect:2.7.3.Final
+    image: debezium/connect:2.7.3.Final
     depends_on:
       kafka: {condition: service_healthy}
       postgres: {condition: service_healthy}
@@ -123,26 +123,33 @@ services:
       retries: 10
 
   # ---------- lakehouse ----------
-  minio:
-    image: minio/minio:latest
-    command: ["server", "/data", "--console-address", ":9001"]
-    environment:
-      MINIO_ROOT_USER: minio
-      MINIO_ROOT_PASSWORD: minio123
-    ports: ["9000:9000", "9001:9001"]
-    volumes: [miniodata:/data]
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 5s
-      retries: 20
+  # S3-compatible object storage for the Iceberg tables (SeaweedFS).
+  s3:
+    image: chrislusf/seaweedfs:4.28
+    command: ["server", "-dir=/data", "-s3", "-s3.port=8333",
+              "-s3.config=/etc/seaweedfs/s3.json", "-master.volumeSizeLimitMB=1024"]
+    ports: ["8333:8333", "8888:8888"]
+    volumes:
+      - s3data:/data
+      - ./infra/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
 
-  minio-init:
-    image: minio/mc:latest
-    depends_on:
-      minio: {condition: service_healthy}
-    entrypoint: ["/bin/sh", "-c"]
+  s3-init:
+    image: amazon/aws-cli:2.38.4
+    depends_on: [s3]
+    environment:
+      AWS_ACCESS_KEY_ID: reconstream
+      AWS_SECRET_ACCESS_KEY: reconstream-secret
+      AWS_DEFAULT_REGION: us-east-1
+    entrypoint: ["/bin/bash", "-c"]
     command:
-      - mc alias set local http://minio:9000 minio minio123 && mc mb --ignore-existing local/lake
+      - |
+        aws configure set default.s3.addressing_style path
+        for i in $$(seq 1 90); do
+          aws --endpoint-url http://s3:8333 s3api head-bucket --bucket lake 2>/dev/null && echo "bucket ready" && exit 0
+          aws --endpoint-url http://s3:8333 s3 mb s3://lake 2>/dev/null && echo "bucket created" && exit 0
+          sleep 2
+        done
+        echo "S3 never became ready" && exit 1
     restart: "no"
 
   spark-streaming:
@@ -152,7 +159,7 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
       kafka-init: {condition: service_completed_successfully}
-      minio-init: {condition: service_completed_successfully}
+      s3-init: {condition: service_completed_successfully}
       connect-init: {condition: service_completed_successfully}
     environment:
       <<: *lake-env
@@ -172,7 +179,7 @@ services:
     image: trinodb/trino:455
     depends_on:
       postgres: {condition: service_healthy}
-      minio: {condition: service_healthy}
+      s3-init: {condition: service_completed_successfully}
     ports: ["8080:8080"]
     volumes:
       - ./infra/trino/catalog/lake.properties:/etc/trino/catalog/lake.properties:ro
@@ -260,5 +267,5 @@ services:
 
 volumes:
   pgdata:
-  miniodata:
+  s3data:
   checkpoints:
