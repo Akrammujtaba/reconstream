@@ -130,7 +130,7 @@ docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
 
 **Measure it:** `docker compose run --rm evaluator`
 
-**Stop:** `docker compose down` (keeps data) or `docker compose down -v` (deletes everything).
+**Stop:** `docker compose down` (keeps data) or `docker compose down -v` (deletes everything and starts fresh next time).
 
 ## Testing
 
