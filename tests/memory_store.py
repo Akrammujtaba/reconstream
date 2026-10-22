@@ -54,13 +54,13 @@ class MemoryStore:
     def append_bronze(self, raw, batch_id):
         self.bronze_rows += raw.count()
 
-    def merge_bookings(self, latest):
+    def merge_bookings(self, latest, created_range=None):
         for r in latest.collect():
             cur = self.b.get(r.booking_id)
             if cur is None or cur["source_lsn"] is None or r.source_lsn > cur["source_lsn"]:
                 self.b[r.booking_id] = r.asDict()
 
-    def merge_payments(self, events):
+    def merge_payments(self, events, occurred_range=None):
         for r in events.collect():
             self.p.setdefault(r.event_id, r.asDict())
 

@@ -46,11 +46,11 @@ class IcebergStore:
     def append_bronze(self, raw: DataFrame, batch_id: int) -> None:
         lakehouse.append_bronze(raw, self._t(BRONZE_EVENTS), batch_id)
 
-    def merge_bookings(self, latest: DataFrame) -> None:
-        lakehouse.merge_bookings(latest, self._t(SILVER_BOOKINGS))
+    def merge_bookings(self, latest: DataFrame, created_range: tuple | None = None) -> None:
+        lakehouse.merge_bookings(latest, self._t(SILVER_BOOKINGS), created_range)
 
-    def merge_payments(self, events: DataFrame) -> None:
-        lakehouse.merge_payments(events, self._t(SILVER_PAYMENTS))
+    def merge_payments(self, events: DataFrame, occurred_range: tuple | None = None) -> None:
+        lakehouse.merge_payments(events, self._t(SILVER_PAYMENTS), occurred_range)
 
     def merge_exceptions(self, changes: DataFrame) -> None:
         lakehouse.merge_exceptions(changes, self._t(GOLD_EXCEPTIONS))

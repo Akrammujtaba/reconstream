@@ -173,9 +173,9 @@ services:
     command:
       - /opt/spark/bin/spark-submit
       - --master
-      - local[2]
+      - local[4]
       - --driver-memory
-      - 2g
+      - 3g
       - /app/reconstream/jobs/streaming_job.py
     ports: ["4040:4040"]
     volumes: [checkpoints:/checkpoints]

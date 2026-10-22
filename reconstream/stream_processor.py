@@ -79,8 +79,11 @@ class StreamProcessor:
         log.info("batch %s: %s", batch_id, {k: round(v, 2) for k, v in stats.items()})
 
     def _process(self, batch: DataFrame, batch_id: int) -> dict:
+        """Kept to as few Spark actions as possible: each one costs a job launch,
+        and with small batches that fixed cost dominates."""
         s = self.settings
-        stats: dict = {"input_rows": batch.count()}
+        per_topic = {r["topic"]: r["count"] for r in batch.groupBy("topic").count().collect()}
+        stats: dict = {"input_rows": sum(per_topic.values())}
         if stats["input_rows"] == 0:
             return stats
 
@@ -95,16 +98,24 @@ class StreamProcessor:
             .persist()
         )
         try:
-            stats["bookings_events"] = changes.count()
-            stats["payment_events"] = payments.count()
-            stats["duplicate_deliveries"] = self._count_redeliveries(batch, payments)
+            # One pass each for counts, MERGE pruning bounds, and the watermark.
+            b = latest.agg(F.count("*").alias("n"), F.min("created_at").alias("lo"),
+                           F.max("created_at").alias("hi"),
+                           F.max("updated_at").alias("newest")).first()
+            p = payments.agg(F.count("*").alias("n"), F.min("occurred_at").alias("lo"),
+                             F.max("occurred_at").alias("hi")).first()
+            stats["bookings_events"] = per_topic.get(s.bookings_topic, 0)
+            stats["payment_events"] = p.n
+            stats["duplicate_deliveries"] = self._count_redeliveries(
+                per_topic.get(s.payments_topic, 0), payments, p
+            )
 
-            if stats["bookings_events"]:
-                self.store.merge_bookings(latest)
-            if stats["payment_events"]:
-                self.store.merge_payments(payments)
+            if b.n:
+                self.store.merge_bookings(latest, created_range=(b.lo, b.hi))
+            if p.n:
+                self.store.merge_payments(payments, occurred_range=(p.lo, p.hi))
 
-            self._advance_watermark(latest, payments)
+            self._advance_watermark([b.newest, p.hi])
             if self.watermark is not None:
                 stats.update(self._reconcile(touched))
         finally:
@@ -113,19 +124,14 @@ class StreamProcessor:
             touched.unpersist()
         return stats
 
-    def _count_redeliveries(self, batch: DataFrame, new_events: DataFrame) -> int:
+    def _count_redeliveries(self, delivered: int, new_events: DataFrame, bounds) -> int:
         """Webhook deliveries that repeat an event_id we already had (in this batch or earlier).
 
         A redelivery carries the same occurred_at as the original, so silver only
         needs to be read for this batch's occurred_at range, which Iceberg prunes
         to a handful of files using column statistics.
         """
-        delivered = batch.where(F.col("topic") == self.settings.payments_topic).count()
-        if not delivered:
-            return 0
-        bounds = new_events.agg(F.min("occurred_at").alias("lo"),
-                                F.max("occurred_at").alias("hi")).first()
-        if bounds is None or bounds.lo is None:
+        if not delivered or bounds.n == 0:
             return delivered
         known = self.store.payments().where(
             F.col("occurred_at").between(F.lit(bounds.lo), F.lit(bounds.hi))
@@ -133,12 +139,8 @@ class StreamProcessor:
         unseen = new_events.join(known, "event_id", "left_anti").count()
         return max(delivered - unseen, 0)
 
-    def _advance_watermark(self, latest: DataFrame, payments: DataFrame) -> None:
-        maxima = [
-            latest.agg(F.max("updated_at").alias("m")).first(),
-            payments.agg(F.max("occurred_at").alias("m")).first(),
-        ]
-        seen = [as_utc(r.m) for r in maxima if r is not None and r.m is not None]
+    def _advance_watermark(self, newest_event_times: list) -> None:
+        seen = [as_utc(t) for t in newest_event_times if t is not None]
         if not seen:
             return
         candidate = max(seen) - self.lateness

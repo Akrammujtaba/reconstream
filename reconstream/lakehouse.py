@@ -7,6 +7,8 @@ exceptions) stop duplicates from landing in silver or gold.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 
@@ -45,7 +47,23 @@ def append_bronze(raw: DataFrame, table: str, batch_id: int) -> None:
     )
 
 
-def merge_bookings(latest: DataFrame, table: str) -> None:
+def _ts(value: datetime) -> str:
+    return f"TIMESTAMP '{value.strftime('%Y-%m-%d %H:%M:%S.%f')}'"
+
+
+def _range_clause(column: str, bounds: tuple | None) -> str:
+    """Extra ON-clause predicate that lets Iceberg skip files outside the batch's range.
+
+    Only used on columns that never change for a key (a booking's created_at, an
+    event's occurred_at), so it cannot hide a real match.
+    """
+    if not bounds or bounds[0] is None or bounds[1] is None:
+        return ""
+    lo, hi = bounds
+    return f" AND t.{column} BETWEEN {_ts(lo)} AND {_ts(hi)}"
+
+
+def merge_bookings(latest: DataFrame, table: str, created_range: tuple | None = None) -> None:
     """Upsert the newest change per booking; an older LSN never overwrites a newer one."""
     view = "_src_bookings"
     latest.withColumn("ingested_at", F.current_timestamp()).select(
@@ -55,14 +73,14 @@ def merge_bookings(latest: DataFrame, table: str) -> None:
         f"""
         MERGE INTO {table} t
         USING {view} s
-        ON t.booking_id = s.booking_id
+        ON t.booking_id = s.booking_id{_range_clause("created_at", created_range)}
         WHEN MATCHED AND (t.source_lsn IS NULL OR s.source_lsn > t.source_lsn) THEN UPDATE SET *
         WHEN NOT MATCHED THEN INSERT *
         """
     )
 
 
-def merge_payments(events: DataFrame, table: str) -> None:
+def merge_payments(events: DataFrame, table: str, occurred_range: tuple | None = None) -> None:
     """Insert-only on event_id, so redelivered webhooks are ignored."""
     view = "_src_payments"
     events.withColumn("ingested_at", F.current_timestamp()).select(
@@ -72,7 +90,7 @@ def merge_payments(events: DataFrame, table: str) -> None:
         f"""
         MERGE INTO {table} t
         USING {view} s
-        ON t.event_id = s.event_id
+        ON t.event_id = s.event_id{_range_clause("occurred_at", occurred_range)}
         WHEN NOT MATCHED THEN INSERT *
         """
     )
