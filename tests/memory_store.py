@@ -88,5 +88,8 @@ class MemoryStore:
                            resolved_at=None, reopen_count=0)
                 self.e[s.exception_id] = row
 
+    def maintain(self, older_than):
+        self.maintenance_runs = getattr(self, "maintenance_runs", 0) + 1
+
     def publish_alerts(self, alerts):
         self.alerts.extend(r.asDict() for r in alerts.collect())

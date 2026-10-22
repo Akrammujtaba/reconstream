@@ -164,6 +164,7 @@ services:
     environment:
       <<: *lake-env
       CHECKPOINT_DIR: /checkpoints/reconstream
+      SPARK_SHUFFLE_PARTITIONS: "4"
     command:
       - /opt/spark/bin/spark-submit
       - --master

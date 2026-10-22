@@ -6,6 +6,8 @@ the same interface, so the processor's logic is tested without Iceberg.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
@@ -52,6 +54,26 @@ class IcebergStore:
 
     def merge_exceptions(self, changes: DataFrame) -> None:
         lakehouse.merge_exceptions(changes, self._t(GOLD_EXCEPTIONS))
+
+    def maintain(self, older_than: datetime) -> None:
+        """Compact small data files, fold in delete files, and drop old snapshots.
+
+        Streaming MERGEs commit every few seconds; without this, file counts and
+        table metadata grow every batch and reads keep getting slower.
+        """
+        cutoff = older_than.strftime("%Y-%m-%d %H:%M:%S")
+        for table in (SILVER_BOOKINGS, SILVER_PAYMENTS, GOLD_EXCEPTIONS, BRONZE_EVENTS):
+            self.spark.sql(
+                f"CALL {self.catalog}.system.rewrite_data_files(table => '{table}', "
+                "options => map('min-input-files', '2', 'delete-file-threshold', '1'))"
+            ).collect()
+            self.spark.sql(
+                f"CALL {self.catalog}.system.rewrite_position_delete_files(table => '{table}')"
+            ).collect()
+            self.spark.sql(
+                f"CALL {self.catalog}.system.expire_snapshots(table => '{table}', "
+                f"older_than => TIMESTAMP '{cutoff}', retain_last => 10)"
+            ).collect()
 
     def publish_alerts(self, alerts: DataFrame) -> None:
         if not (self.kafka_bootstrap and self.alerts_topic):

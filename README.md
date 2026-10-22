@@ -43,7 +43,7 @@ flowchart LR
     WH -- "invalid payloads" --> DLQ[["payments.dlq"]]
     DBZ --> K[["Kafka"]]
     WH --> K
-    K --> SS["Spark Structured Streaming<br/>micro-batch every 10s"]
+    K --> SS["Spark Structured Streaming<br/>micro-batch every 15s"]
     SS --> BR[("bronze<br/>raw events")]
     SS --> SV[("silver<br/>bookings, payments")]
     SS --> GD[("gold<br/>recon_exceptions")]
@@ -62,11 +62,11 @@ All tables are **Apache Iceberg** on S3 (SeaweedFS, an S3-compatible store, loca
 ## How it works
 
 1. **Capture.** Booking changes stream out of Postgres through Debezium (logical replication, ordered by LSN). Payment webhooks hit a FastAPI service that checks the HMAC signature and validates a strict contract. Bad payloads go to a dead-letter topic with the reason, and Kafka outages return `503` so the provider retries.
-2. **Land.** Every 10 seconds Spark writes raw records to **bronze**, then MERGEs into **silver**. Bookings are upserted by key, and an older LSN never overwrites a newer one. Payments are insert-only on `event_id`, so redeliveries disappear.
-3. **Reconcile.** Spark re-checks every booking touched inside a 6-hour horizon against six rules. Deadlines are judged on an **event-time watermark** (newest event seen minus 30s allowed lateness), not on when Spark happened to run.
+2. **Land.** Every 15 seconds Spark writes raw records to **bronze**, then MERGEs into **silver**. Bookings are upserted by key, and an older LSN never overwrites a newer one. Payments are insert-only on `event_id`, so redeliveries disappear.
+3. **Reconcile.** Spark re-checks only the bookings whose answer can have changed: ones that got new events in this batch, and ones whose SLA deadline just passed. Work per batch tracks batch size, not table size. Deadlines are judged on an **event-time watermark** (newest event seen minus 30s allowed lateness), not on when Spark happened to run.
 4. **Track.** Results are diffed against stored exceptions and MERGEd into **gold** as new, still-open, resolved, or re-opened. Only new and re-opened exceptions alert (Kafka topic, plus Slack if configured).
 5. **Backstop.** A nightly Airflow DAG re-runs the **same rule code** over the whole day with a wall-clock "now", catching anything the stream couldn't judge. It then runs Great Expectations on silver and builds dbt marts for finance.
-6. **Maintain.** A second DAG compacts the small files and delete files that streaming MERGEs create, and expires old Iceberg snapshots.
+6. **Maintain.** Every 40 batches the stream compacts the small files and delete files its MERGEs create and expires old snapshots, so reads stay fast; a nightly DAG does a fuller pass.
 
 The design reasoning (why `foreachBatch` instead of a stream-stream join, why event time, how idempotency works) is in [docs/design-decisions.md](docs/design-decisions.md).
 
@@ -164,7 +164,7 @@ tests/                53 unit and scenario tests
 ## Taking it to production
 
 - **AWS:** `infra/terraform` provisions the S3 lake bucket, Glue catalog databases, an EMR Serverless Spark application, and least-privilege IAM. Kafka would move to MSK and Airflow to MWAA.
-- **Scale:** partition `silver.payments` by `bucket(booking_id)` so the per-batch semi-joins prune files, and scope re-evaluation to touched keys plus keys whose deadline fell inside the batch, rather than a fixed horizon.
+- **Scale:** partition `silver.payments` by `bucket(booking_id)` so the per-batch semi-joins prune files, and move compaction to a separate job so it never pauses the stream.
 - **Idle watermark:** with no traffic the event-time watermark stops moving, so timeouts wait for the next event or the nightly run. A heartbeat event per partition would keep it moving.
 - **Rules:** partial-refund policies, multi-currency FX tolerance, and per-merchant SLAs would come from a config table rather than code constants.
 

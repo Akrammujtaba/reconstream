@@ -23,6 +23,7 @@ class Settings:
     horizon_minutes: int
     trigger_seconds: int
     max_offsets_per_trigger: int
+    compact_every_batches: int
     pushgateway: str | None
     slack_webhook_url: str | None
 
@@ -38,8 +39,10 @@ class Settings:
             sla_minutes=int(_env("RECON_SLA_MINUTES", "2")),
             allowed_lateness_seconds=int(_env("RECON_ALLOWED_LATENESS_SECONDS", "30")),
             horizon_minutes=int(_env("RECON_HORIZON_MINUTES", "360")),
-            trigger_seconds=int(_env("STREAM_TRIGGER_SECONDS", "10")),
+            trigger_seconds=int(_env("STREAM_TRIGGER_SECONDS", "15")),
             max_offsets_per_trigger=int(_env("STREAM_MAX_OFFSETS_PER_TRIGGER", "20000")),
+            # Compact silver/gold every N non-empty batches (0 disables; nightly job still runs).
+            compact_every_batches=int(_env("STREAM_COMPACT_EVERY_BATCHES", "40")),
             pushgateway=os.environ.get("PUSHGATEWAY_URL") or None,
             slack_webhook_url=os.environ.get("SLACK_WEBHOOK_URL") or None,
         )

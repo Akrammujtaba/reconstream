@@ -38,9 +38,20 @@ Bookings are ordered by **LSN** rather than `updated_at` because LSNs strictly i
 
 Bronze is deliberately at-least-once. It is a replay log, and making it exactly-once would mean a MERGE over a growing table every 10 seconds. Nothing reads bronze without de-duplicating.
 
+### How does per-batch work stay flat as the tables grow?
+
+The first version re-checked every booking from the last 6 hours on every micro-batch. On a real run, batch time climbed from 7s to 50s within minutes, because the work grew with the table rather than with the batch.
+
+An exception can only change for two reasons: new data arrived for that booking, or its deadline passed. So each batch evaluates exactly those bookings:
+
+- **touched:** booking ids in this batch's CDC changes or payment events
+- **newly due:** bookings whose `confirmed_at`, `cancelled_at`, or first capture plus the SLA falls between the previous watermark and the new one
+
+Those windows are contiguous, so no deadline is skipped. After a restart, the first batch catches up over the full horizon.
+
 ### Why merge-on-read Iceberg tables, and what does it cost?
 
-Copy-on-write would rewrite whole data files on every 10-second MERGE. Merge-on-read writes small delete files instead, so streaming writes are cheap. The cost is read amplification as delete files pile up, which is why `reconstream_maintenance` runs `rewrite_data_files`, `rewrite_position_delete_files`, `expire_snapshots`, and `rewrite_manifests` nightly.
+Copy-on-write would rewrite whole data files on every MERGE. Merge-on-read writes small delete files instead, so streaming writes are cheap. The cost is read amplification: every batch adds files and delete files, and every read has to open them. So the stream itself runs `rewrite_data_files`, `rewrite_position_delete_files`, and `expire_snapshots` every 40 batches, and `reconstream_maintenance` does a fuller pass (including `rewrite_manifests`) nightly.
 
 `write.merge.isolation-level = snapshot` reduces commit conflicts between the streaming job and the nightly batch, which both write to gold. Conflicts that still happen are retried by Airflow.
 
@@ -65,7 +76,7 @@ The generator writes every injected fault to `audit.injected_faults`, with the t
 ### What would change at real scale?
 
 - Partition `silver.payments` by `bucket(N, booking_id)` so the semi-joins on scope ids prune files.
-- Scope re-evaluation to touched keys plus keys whose deadline fell inside the batch, instead of a fixed time horizon.
+- Run compaction as its own scheduled job instead of inside the stream, so it never pauses detection.
 - Run on EMR Serverless or Kubernetes with checkpoints in S3 instead of local mode.
 - Move SLAs and refund policy into a config table so they can differ per market or merchant.
 - Add a heartbeat event per Kafka partition so the watermark advances during quiet periods.

@@ -19,7 +19,7 @@ def settings(**over):
         kafka_bootstrap="unused", bookings_topic=BOOKINGS_TOPIC, payments_topic=PAYMENTS_TOPIC,
         alerts_topic="recon.alerts", catalog="lake", checkpoint_dir="/tmp/x", sla_minutes=2,
         allowed_lateness_seconds=30, horizon_minutes=360, trigger_seconds=10,
-        max_offsets_per_trigger=1000, pushgateway=None, slack_webhook_url=None,
+        max_offsets_per_trigger=1000, compact_every_batches=0, pushgateway=None, slack_webhook_url=None,
     )
     base.update(over)
     return Settings(**base)
@@ -150,3 +150,40 @@ def test_empty_batch_is_a_no_op(spark):
     store, proc, _ = make(spark)
     proc.process(batch(spark, []), 0)
     assert store.bronze_rows == 0 and store.e == {}
+
+
+def test_only_touched_or_newly_due_bookings_are_reevaluated(spark):
+    store, proc, clock = make(spark)
+    # 20 bookings confirmed at T0, all paid: nothing to flag, ever.
+    events = []
+    for i in range(20):
+        events.append(cdc(f"b{i}", "CONFIRMED", T0, lsn=i + 1))
+        events.append(payment(f"e{i}", f"b{i}", T0 + timedelta(seconds=5), payment_id=f"p{i}"))
+    proc.process(batch(spark, events), 0)
+
+    # Later batch touches one new booking; deadlines for the 20 have not moved past
+    # since the last evaluation, so only the touched booking is re-checked.
+    later = T0 + timedelta(seconds=40)
+    proc.process(batch(spark, [cdc("new", "PENDING", later, lsn=100)]), 1)
+    assert store.e == {}
+    assert proc.last_stats["evaluated_bookings"] == 1
+    assert proc.evaluated_through == later - timedelta(seconds=30)
+
+
+def test_deadline_window_catches_booking_without_new_events(spark):
+    store, proc, clock = make(spark)
+    proc.process(batch(spark, [cdc("quiet", "CONFIRMED", T0, lsn=1)]), 0)
+    # Unrelated traffic only; "quiet" gets no new events but its deadline passes.
+    for n, minutes in enumerate((1, 2, 3)):
+        at = T0 + timedelta(minutes=minutes)
+        proc.process(batch(spark, [cdc(f"other{n}", "PENDING", at, lsn=10 + n)]), n + 1)
+    assert exc(store, "quiet")["MISSING_PAYMENT"]["status"] == "OPEN"
+
+
+def test_periodic_maintenance_runs_every_n_batches(spark):
+    store = MemoryStore(spark)
+    proc = StreamProcessor(store, settings(compact_every_batches=2), StreamMetrics(None),
+                           clock=Clock(T0))
+    for i in range(4):
+        proc.process(batch(spark, [cdc(f"b{i}", "PENDING", T0, lsn=i + 1)]), i)
+    assert store.maintenance_runs == 2
