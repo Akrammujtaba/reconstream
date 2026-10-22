@@ -192,6 +192,7 @@ services:
       AIRFLOW__WEBSERVER__SECRET_KEY: reconstream-local-only
       TRINO_HOST: trino
       TRINO_PORT: "8080"
+      DBT_SEND_ANONYMOUS_USAGE_STATS: "false"
     command:
       - bash
       - -c

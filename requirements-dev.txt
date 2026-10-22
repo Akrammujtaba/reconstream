@@ -1,0 +1,11 @@
+# Test and lint dependencies (CI and local). Runtime images pin their own.
+pyspark==3.5.3
+numpy<2
+pandas<2.3
+great_expectations==1.2.6
+prometheus-client==0.21.1
+fastapi==0.115.6
+pydantic==2.10.4
+httpx==0.28.1
+pytest==8.3.4
+ruff==0.8.4

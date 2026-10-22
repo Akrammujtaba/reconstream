@@ -14,10 +14,9 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+from airflow import DAG
 from airflow.models.param import Param
 from airflow.operators.bash import BashOperator
-
-from airflow import DAG
 
 SPARK_SUBMIT = "/opt/airflow/jobs-venv/bin/spark-submit --master 'local[2]' --driver-memory 2g"
 JOBS = "/opt/reconstream/reconstream/jobs"

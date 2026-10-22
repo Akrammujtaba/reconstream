@@ -32,3 +32,6 @@ seeds:
         +schema: silver
       gold:
         +schema: gold
+
+flags:
+  send_anonymous_usage_stats: false
