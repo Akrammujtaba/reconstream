@@ -1,0 +1,4 @@
+# Keep LF line endings on Windows checkouts so shell scripts and SQL run inside Linux containers.
+* text=auto eol=lf
+*.png binary
+*.jpg binary

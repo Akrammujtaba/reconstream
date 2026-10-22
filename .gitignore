@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+spark-warehouse/
+metastore_db/
+derby.log
+dbt/target/
+dbt/logs/
+dbt/dbt_packages/
+*.duckdb
+.env
+evaluation/results.md
+infra/terraform/.terraform/
+infra/terraform/*.tfstate*
