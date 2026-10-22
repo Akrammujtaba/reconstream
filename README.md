@@ -1,6 +1,6 @@
 # ReconStream
 
-**Real-time payment reconciliation for a booking marketplace.** ReconStream matches every booking against the money that actually moved, and flags double charges, missing payments, wrong amounts, and unpaid refunds about a minute after they happen, instead of at month-end close.
+**Real-time payment reconciliation for a booking marketplace.** ReconStream matches every booking against the money that actually moved, and flags double charges, missing payments, wrong amounts, and unpaid refunds within about 40 seconds (median) of when they become detectable, instead of at month-end close.
 
 ![CI](https://github.com/Akrammujtaba/reconstream/actions/workflows/ci.yml/badge.svg)
 
@@ -74,16 +74,22 @@ The design reasoning (why `foreachBatch` instead of a stream-stream join, why ev
 
 The traffic generator injects known faults at known rates, plus realistic noise: duplicate deliveries, out-of-order delivery, failed payment attempts, malformed payloads, and payments that arrive after the SLA but are valid. Because every injected fault is recorded, detection can be measured rather than claimed.
 
-<!-- Replace this section with the output of: docker compose run --rm evaluator -->
-| Metric | Value |
-|---|---|
-| Recall (injected faults detected) | _run the evaluator_ |
-| Precision (open exceptions that are real) | _run the evaluator_ |
-| Detection latency p50 / p95 | _run the evaluator_ |
-| Late payments auto-resolved | _run the evaluator_ |
-| Sustained throughput | _run the evaluator_ |
+Measured on a laptop (Docker Desktop, single-node Spark in local mode) after 30 minutes of generated traffic. Exact output is in the evaluator's `results.md`.
 
-Run `docker compose run --rm evaluator` after the stack has been generating traffic for 20+ minutes. It writes `evaluation/results.md`.
+| Metric | Full run | Steady state (last 15 min) |
+|---|---|---|
+| Injected faults detected (recall) | **321 / 321 (100%)** | **116 / 116 (100%)** |
+| Open exceptions that were real faults (precision) | **100%, 0 false positives** | **100%, 0 false positives** |
+| Late-but-valid payments auto-resolved | 30 / 30 | 13 / 13 |
+| Detection latency p50 | 45s | **40s** |
+| Detection latency p95 | 313s* | **79s** |
+| Payment events processed | 4,777 | — |
+
+\* The full-run p95 includes the first 15 minutes, before two performance fixes and a restart catch-up (see [design decisions](docs/design-decisions.md)). The steady-state column is the current version.
+
+Per type (steady state), p50 / p95: duplicate charge 29s / 53s, amount mismatch 26s / 48s, currency mismatch 29s / 34s, orphan payment 50s / 67s, missing payment 53s / 97s, refund mismatch 63s / 102s. Deadline-based types take longer because they wait out the 30-second allowed lateness before judging.
+
+To reproduce: run `docker compose run --rm evaluator` after the stack has generated traffic for 20+ minutes. Set `EVAL_SINCE_MINUTES=15` to score only the most recent window.
 
 In unit tests, a 15-minute simulated run with every fault type, pushed through the parsing and reconciliation code, finds **exactly** the injected faults: no misses, no false positives, and every late payment resolved (`tests/test_generator_end_to_end.py`).
 
