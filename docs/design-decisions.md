@@ -36,7 +36,7 @@ Spark can replay a micro-batch after a crash, so every write must be safe to rep
 
 Bookings are ordered by **LSN** rather than `updated_at` because LSNs strictly increase, while application timestamps can tie or go backwards with clock drift.
 
-Bronze is deliberately at-least-once. It is a replay log, and making it exactly-once would mean a MERGE over a growing table every 10 seconds. Nothing reads bronze without de-duplicating.
+Bronze is deliberately at-least-once. It is a replay log, and making it exactly-once would mean a MERGE over a growing table every few seconds. Nothing reads bronze without de-duplicating.
 
 ### How does per-batch work stay flat as the tables grow?
 
