@@ -15,7 +15,7 @@ Planned improvements, roughly smallest first. Each one is a self-contained chang
 
 ## Medium (a few sessions)
 
-- [ ] **Heartbeat events so the watermark advances when traffic is quiet.** Today timeouts wait for the next real event. Emit a heartbeat per Kafka partition and ignore it in parsing.
+- [ ] **Heartbeat events so the watermark advances when traffic is quiet.** Today timeouts wait for the next real event. Emit a heartbeat per Kafka partition and ignore it in parsing. [SubwayPulse](https://github.com/Akrammujtaba/subwaypulse) already does this; port the same approach.
 - [ ] **Bucket-partition `silver.payments` by `booking_id`** and measure the effect on batch duration with the evaluator.
 - [ ] **Move in-stream compaction to its own Airflow DAG** running every 15 minutes, and compare p95 latency before and after.
 - [ ] **Dead-letter replay tool.** Read `payments.dlq`, fix a known class of error, and re-post to the webhook.
