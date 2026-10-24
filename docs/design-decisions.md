@@ -49,6 +49,8 @@ An exception can only change for two reasons: new data arrived for that booking,
 
 Those windows are contiguous, so no deadline is skipped. After a restart, the first batch catches up over the full horizon.
 
+The SLA can differ per currency (`RECON_SLA_MINUTES_BY_CURRENCY=INR=5`), because slower payment rails would otherwise raise false `MISSING_PAYMENT` alerts. That makes the deadline `ts + CASE currency ...`, which Iceberg cannot prune on, so the scan first filters the raw timestamp with the shortest and longest SLA (prunable), then applies the exact per-currency deadline. `test_per_currency_sla_is_honoured_by_the_deadline_scope` covers a booking that is due only through this scan.
+
 ### What was the hardest bug?
 
 After making batches faster, detection silently dropped to zero while every unit test still passed. The cause was in how Spark and Iceberg cache tables:
@@ -89,5 +91,5 @@ The generator writes every injected fault to `audit.injected_faults`, with the t
 - Partition `silver.payments` by `bucket(N, booking_id)` so the semi-joins on scope ids prune files.
 - Run compaction as its own scheduled job instead of inside the stream, so it never pauses detection.
 - Run on EMR Serverless or Kubernetes with checkpoints in S3 instead of local mode.
-- Move SLAs and refund policy into a config table so they can differ per market or merchant.
+- Move SLAs (already configurable per currency through an env var) and refund policy into a config table so they can differ per market or merchant.
 - Add a heartbeat event per Kafka partition so the watermark advances during quiet periods.

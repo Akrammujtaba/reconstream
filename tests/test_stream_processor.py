@@ -32,10 +32,10 @@ def iso(dt):
 _offset = iter(range(100_000))
 
 
-def cdc(booking_id, status, at, lsn, amount=10000):
+def cdc(booking_id, status, at, lsn, amount=10000, currency="USD"):
     row = {
         "booking_id": booking_id, "guest_id": "g", "listing_id": "l", "status": status,
-        "amount_cents": amount, "currency": "USD", "created_at": iso(T0),
+        "amount_cents": amount, "currency": currency, "created_at": iso(T0),
         "confirmed_at": iso(at) if status == "CONFIRMED" else None,
         "cancelled_at": None, "updated_at": iso(at),
     }
@@ -71,10 +71,10 @@ class Clock:
         return self.now
 
 
-def make(spark):
+def make(spark, **over):
     store = MemoryStore(spark)
     clock = Clock(T0)
-    proc = StreamProcessor(store, settings(), StreamMetrics(None), clock=clock)
+    proc = StreamProcessor(store, settings(**over), StreamMetrics(None), clock=clock)
     return store, proc, clock
 
 
@@ -187,3 +187,27 @@ def test_periodic_maintenance_runs_every_n_batches(spark):
     for i in range(4):
         proc.process(batch(spark, [cdc(f"b{i}", "PENDING", T0, lsn=i + 1)]), i)
     assert store.maintenance_runs == 2
+
+
+def test_per_currency_sla_is_honoured_by_the_deadline_scope(spark):
+    """An INR booking with a 5-minute SLA must not be flagged at the 2-minute default, and
+    must still be picked up later by the deadline scan even though no event touches it."""
+    store, proc, clock = make(spark, sla_minutes_by_currency={"INR": 5})
+    proc.process(batch(spark, [
+        cdc("usd", "CONFIRMED", T0, lsn=1),
+        cdc("inr", "CONFIRMED", T0, lsn=2, currency="INR"),
+    ]), 0)
+
+    # Watermark T0 + 2m30s: past the USD deadline, not the INR one.
+    clock.now = T0 + timedelta(minutes=3)
+    proc.process(batch(spark, [cdc("x1", "PENDING", T0 + timedelta(minutes=3), lsn=3)]), 1)
+    assert exc(store, "usd")["MISSING_PAYMENT"]["status"] == "OPEN"
+    assert exc(store, "inr") == {}
+
+    # Unrelated traffic moves the watermark to T0 + 5m30s; the INR deadline is crossed.
+    clock.now = T0 + timedelta(minutes=6)
+    proc.process(batch(spark, [cdc("x2", "PENDING", T0 + timedelta(minutes=6), lsn=4)]), 2)
+    inr = exc(store, "inr")["MISSING_PAYMENT"]
+    assert inr["status"] == "OPEN"
+    assert inr["due_at"] == (T0 + timedelta(minutes=5)).replace(tzinfo=None)
+    assert [a["booking_id"] for a in store.alerts] == ["usd", "inr"]

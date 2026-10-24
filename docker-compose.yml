@@ -18,6 +18,8 @@ x-lake-env: &lake-env
   KAFKA_BOOTSTRAP: kafka:9092
   PUSHGATEWAY_URL: pushgateway:9091
   RECON_SLA_MINUTES: ${RECON_SLA_MINUTES:-2}
+  # Optional per-currency overrides, e.g. "INR=5,EUR=3". Unlisted currencies use the default.
+  RECON_SLA_MINUTES_BY_CURRENCY: ${RECON_SLA_MINUTES_BY_CURRENCY:-}
   RECON_ALLOWED_LATENESS_SECONDS: "30"
   SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
 

@@ -3,11 +3,39 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 
 
 def _env(name: str, default: str) -> str:
     return os.environ.get(name, default)
+
+
+def parse_sla_overrides(raw: str) -> dict[str, int]:
+    """Parse per-currency SLA overrides such as "INR=5,EUR=3" into {"INR": 5, "EUR": 3}.
+
+    Payment rails settle at different speeds (UPI/INR flows can lag card captures),
+    so one global SLA either flags slow-but-healthy markets or waits too long on fast
+    ones. A malformed value raises at startup instead of silently falling back to the
+    default, because a typo here would quietly change what counts as an exception.
+    """
+    overrides: dict[str, int] = {}
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        currency, sep, minutes = part.partition("=")
+        currency = currency.strip().upper()
+        if not sep or len(currency) != 3 or not currency.isalpha():
+            raise ValueError(f"bad SLA override {part!r}: expected CCY=MINUTES, e.g. INR=5")
+        try:
+            value = int(minutes)
+        except ValueError:
+            raise ValueError(f"bad SLA override {part!r}: minutes must be an integer") from None
+        if value <= 0:
+            raise ValueError(f"bad SLA override {part!r}: minutes must be positive")
+        overrides[currency] = value
+    return overrides
 
 
 @dataclass(frozen=True)
@@ -26,6 +54,12 @@ class Settings:
     compact_every_batches: int
     pushgateway: str | None
     slack_webhook_url: str | None
+    # Currency -> SLA minutes. Currencies not listed use `sla_minutes`.
+    sla_minutes_by_currency: Mapping[str, int] = field(default_factory=dict)
+
+    def sla_for(self, currency: str | None) -> int:
+        """SLA minutes for a currency, falling back to the global default."""
+        return self.sla_minutes_by_currency.get((currency or "").upper(), self.sla_minutes)
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -45,6 +79,7 @@ class Settings:
             compact_every_batches=int(_env("STREAM_COMPACT_EVERY_BATCHES", "40")),
             pushgateway=os.environ.get("PUSHGATEWAY_URL") or None,
             slack_webhook_url=os.environ.get("SLACK_WEBHOOK_URL") or None,
+            sla_minutes_by_currency=parse_sla_overrides(_env("RECON_SLA_MINUTES_BY_CURRENCY", "")),
         )
 
 

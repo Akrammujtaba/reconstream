@@ -7,6 +7,7 @@ paths can never disagree about what counts as an exception.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 
 from pyspark.sql import Column, DataFrame, Window
@@ -47,6 +48,20 @@ EXCEPTION_COLUMNS = [
 
 def _interval_minutes(minutes: int) -> Column:
     return F.expr(f"INTERVAL {int(minutes)} MINUTES")
+
+
+def sla_interval(currency: Column, default_minutes: int,
+                 by_currency: Mapping[str, int] | None = None) -> Column:
+    """Per-row SLA as an interval: the currency's override if it has one, else the default.
+
+    Built as one CASE expression rather than a join to a lookup table: the map is a
+    handful of entries known at startup, so this keeps the plan join-free and the
+    rule visible in `explain()`.
+    """
+    sla = _interval_minutes(default_minutes)
+    for ccy, minutes in sorted((by_currency or {}).items()):
+        sla = F.when(F.upper(currency) == F.lit(ccy.upper()), _interval_minutes(minutes)).otherwise(sla)
+    return sla
 
 
 def _exception_id(booking_id: Column, exception_type: Column) -> Column:
@@ -91,6 +106,7 @@ def reconcile(
     known_booking_ids: DataFrame,
     as_of: datetime,
     sla_minutes: int,
+    sla_minutes_by_currency: Mapping[str, int] | None = None,
 ) -> DataFrame:
     """Return the exceptions that are true as of `as_of` (an event-time watermark).
 
@@ -99,8 +115,12 @@ def reconcile(
     known_booking_ids every booking_id that exists, used to spot orphan payments
     as_of             timezone-aware datetime; deadlines are compared to this
     sla_minutes       how long a payment or refund may lag before it is flagged
+    sla_minutes_by_currency
+                      optional per-currency overrides of `sla_minutes`; a booking uses
+                      its own currency, an orphan payment (no booking) its capture currency
     """
-    sla = _interval_minutes(sla_minutes)
+    sla = sla_interval(F.col("booking_currency"), sla_minutes, sla_minutes_by_currency)
+    orphan_sla = sla_interval(F.col("capture_currency"), sla_minutes, sla_minutes_by_currency)
     as_of_col = F.lit(as_of).cast("timestamp")
     cap, ref = summarize_payments(payments)
 
@@ -207,7 +227,7 @@ def reconcile(
 
     orphans = (
         cap.join(known_booking_ids.select("booking_id").distinct(), "booking_id", "left_anti")
-        .where((F.col("first_capture_at") + sla) <= as_of_col)
+        .where((F.col("first_capture_at") + orphan_sla) <= as_of_col)
         .withColumn("booking_currency", F.lit(None).cast("string"))
     )
     orphan = shape(
@@ -218,7 +238,7 @@ def reconcile(
         F.col("captured_cents"),
         F.col("capture_currency"),
         F.col("capture_payment_ids"),
-        F.col("first_capture_at") + sla,
+        F.col("first_capture_at") + orphan_sla,
     )
 
     result = missing

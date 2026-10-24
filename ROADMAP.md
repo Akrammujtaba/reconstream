@@ -4,7 +4,7 @@ Planned improvements, roughly smallest first. Each one is a self-contained chang
 
 ## Small (under an hour)
 
-- [ ] **Configurable SLA per currency.** Read SLA minutes from a small dict (e.g. INR bookings get 5 minutes) instead of one global value. Add a test in `tests/test_reconcile.py`.
+- [x] **Configurable SLA per currency.** Read SLA minutes from a small dict (e.g. INR bookings get 5 minutes) instead of one global value. Add a test in `tests/test_reconcile.py`.
 - [ ] **Partial-refund tolerance.** Let `REFUND_MISMATCH` ignore differences under a configurable amount (e.g. 1 cent from rounding). Test both sides of the threshold.
 - [ ] **Alert severity in Kafka messages.** Add `severity` (from the dbt `exception_types` seed) to the alert JSON in `store.publish_alerts`.
 - [ ] **Generator CLI flag for a single fault type.** `--only DUPLICATE_CHARGE` to demo one scenario at a time.

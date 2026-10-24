@@ -41,6 +41,7 @@ def run_batch(store, settings: Settings, start: date | None = None, end: date | 
             bookings.select("booking_id").join(scope, "booking_id", "left_semi"),
             as_of=as_of,
             sla_minutes=settings.sla_minutes,
+            sla_minutes_by_currency=settings.sla_minutes_by_currency,
         )
         existing = store.exceptions().join(scope, "booking_id", "left_semi")
         plan = plan_exception_changes(current, existing, scope, now, detected_by="batch").persist()

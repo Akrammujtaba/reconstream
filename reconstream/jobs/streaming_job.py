@@ -49,9 +49,10 @@ def main() -> None:
         .start()
     )
     logging.getLogger("reconstream").info(
-        "streaming started: topics=%s,%s sla=%sm lateness=%ss",
+        "streaming started: topics=%s,%s sla=%sm sla_by_currency=%s lateness=%ss",
         settings.bookings_topic, settings.payments_topic,
-        settings.sla_minutes, settings.allowed_lateness_seconds,
+        settings.sla_minutes, dict(settings.sla_minutes_by_currency),
+        settings.allowed_lateness_seconds,
     )
     query.awaitTermination()
 

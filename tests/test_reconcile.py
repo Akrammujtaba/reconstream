@@ -31,11 +31,12 @@ def pay(bid, pid, amount=10000, ccy="USD", at=T0 + timedelta(seconds=10),
     return (eid, etype, pid, bid, amount, ccy, at, at)
 
 
-def run(spark, bookings, payments, as_of=T0 + timedelta(minutes=10), known=None):
+def run(spark, bookings, payments, as_of=T0 + timedelta(minutes=10), known=None,
+        sla_by_currency=None):
     b = spark.createDataFrame(bookings, BOOKING_SCHEMA)
     p = spark.createDataFrame(payments, PAYMENT_SCHEMA)
     k = known if known is not None else b.select("booking_id")
-    rows = R.reconcile(b, p, k, as_of, SLA).collect()
+    rows = R.reconcile(b, p, k, as_of, SLA, sla_by_currency).collect()
     return {(r.booking_id, r.exception_type): r for r in rows}
 
 
@@ -74,6 +75,48 @@ def test_missing_payment_only_after_sla(spark):
     out = run(spark, [booking("b1")], [], as_of=T0 + timedelta(minutes=SLA))
     exc = out[("b1", R.MISSING_PAYMENT)]
     assert exc.due_at == (T0 + timedelta(minutes=SLA)).replace(tzinfo=None)
+
+
+INR_SLA = {"INR": 5}  # slower rail: INR bookings get 5 minutes instead of the default 2
+
+
+def test_currency_override_delays_missing_payment_for_that_currency_only(spark):
+    rows = [booking("usd"), booking("inr", ccy="INR")]
+    at_default_deadline = T0 + timedelta(minutes=SLA)
+    out = run(spark, rows, [], as_of=at_default_deadline, sla_by_currency=INR_SLA)
+    assert set(out) == {("usd", R.MISSING_PAYMENT)}, "INR is still inside its 5-minute SLA"
+
+    just_before = T0 + timedelta(minutes=5) - timedelta(seconds=1)
+    assert ("inr", R.MISSING_PAYMENT) not in run(
+        spark, rows, [], as_of=just_before, sla_by_currency=INR_SLA
+    )
+    out = run(spark, rows, [], as_of=T0 + timedelta(minutes=5), sla_by_currency=INR_SLA)
+    assert out[("inr", R.MISSING_PAYMENT)].due_at == (T0 + timedelta(minutes=5)).replace(tzinfo=None)
+    assert out[("usd", R.MISSING_PAYMENT)].due_at == at_default_deadline.replace(tzinfo=None)
+
+
+def test_currency_override_matches_case_insensitively(spark):
+    out = run(spark, [booking("inr", ccy="INR")], [], as_of=T0 + timedelta(minutes=SLA),
+              sla_by_currency={"inr": 5})
+    assert out == {}
+
+
+def test_currency_override_applies_to_refund_deadline(spark):
+    cancelled = T0 + timedelta(minutes=1)
+    rows = [booking("inr", status="CANCELLED", ccy="INR", cancelled=cancelled)]
+    payments = [pay("inr", "p1", ccy="INR")]
+    assert run(spark, rows, payments, as_of=cancelled + timedelta(minutes=4),
+               sla_by_currency=INR_SLA) == {}
+    out = run(spark, rows, payments, as_of=cancelled + timedelta(minutes=5),
+              sla_by_currency=INR_SLA)
+    assert set(out) == {("inr", R.REFUND_MISMATCH)}
+
+
+def test_orphan_payment_uses_its_capture_currency_sla(spark):
+    p = [pay("ghost", "p9", ccy="INR", at=T0)]
+    assert run(spark, [], p, as_of=T0 + timedelta(minutes=SLA), sla_by_currency=INR_SLA) == {}
+    out = run(spark, [], p, as_of=T0 + timedelta(minutes=5), sla_by_currency=INR_SLA)
+    assert set(out) == {("ghost", R.ORPHAN_PAYMENT)}
 
 
 def test_pending_or_deleted_bookings_are_not_missing_payments(spark):

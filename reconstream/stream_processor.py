@@ -29,7 +29,7 @@ from pyspark.sql import functions as F
 from reconstream.config import Settings
 from reconstream.observability import StreamMetrics, post_slack_summary
 from reconstream.parsing import latest_booking_per_key, parse_booking_changes, parse_payment_events
-from reconstream.reconcile import CAPTURED, plan_exception_changes, reconcile
+from reconstream.reconcile import CAPTURED, plan_exception_changes, reconcile, sla_interval
 
 log = logging.getLogger("reconstream.stream")
 
@@ -49,7 +49,10 @@ class StreamProcessor:
         self.metrics = metrics or StreamMetrics(settings.pushgateway)
         self.clock = clock
         self.lateness = timedelta(seconds=settings.allowed_lateness_seconds)
-        self.sla = timedelta(minutes=settings.sla_minutes)
+        # Shortest and longest SLA across all currencies; they bound the deadline window.
+        all_slas = [settings.sla_minutes, *settings.sla_minutes_by_currency.values()]
+        self.min_sla = timedelta(minutes=min(all_slas))
+        self.max_sla = timedelta(minutes=max(all_slas))
         self.watermark: datetime | None = self._initial_watermark()
         # Watermark at the last reconciliation. None means "catch up over the horizon".
         self.evaluated_through: datetime | None = None
@@ -150,17 +153,27 @@ class StreamProcessor:
     def _deadline_scope(self, bookings: DataFrame, payments: DataFrame) -> DataFrame:
         """Bookings whose SLA deadline passed since the last evaluation.
 
-        A deadline is (confirmed_at | cancelled_at | first capture) + SLA. It "passes"
-        when the watermark moves beyond it, so the window is
-        (evaluated_through - SLA, watermark - SLA] on those timestamps.
+        A deadline is (confirmed_at | cancelled_at | first capture) + SLA, where the
+        SLA depends on the row's currency. It "passes" when the watermark moves beyond
+        it, so we want deadlines in (evaluated_through, watermark].
+
+        Two filters per timestamp: a coarse range on the raw column using the
+        shortest/longest SLA, which Iceberg can prune files with (an expression like
+        `ts + CASE ... END` defeats min/max statistics), then the exact per-currency
+        deadline check on the surviving rows. With no overrides the two coincide.
         """
+        s = self.settings
         start = self.evaluated_through or (
-            self.watermark - timedelta(minutes=self.settings.horizon_minutes)
+            self.watermark - timedelta(minutes=s.horizon_minutes)
         )
-        lo, hi = F.lit(start - self.sla), F.lit(self.watermark - self.sla)
+        lo, hi = F.lit(start), F.lit(self.watermark)
+        coarse_lo, coarse_hi = F.lit(start - self.max_sla), F.lit(self.watermark - self.min_sla)
+        sla = sla_interval(F.col("currency"), s.sla_minutes, s.sla_minutes_by_currency)
 
         def crossed(col: str):
-            return (F.col(col) > lo) & (F.col(col) <= hi)
+            deadline = F.col(col) + sla
+            return ((F.col(col) > coarse_lo) & (F.col(col) <= coarse_hi)
+                    & (deadline > lo) & (deadline <= hi))
 
         due_bookings = bookings.where(crossed("confirmed_at") | crossed("cancelled_at"))
         due_orphans = payments.where((F.col("event_type") == CAPTURED) & crossed("occurred_at"))
@@ -186,6 +199,7 @@ class StreamProcessor:
                 bookings.select("booking_id").join(scope, "booking_id", "left_semi"),
                 as_of=self.watermark,
                 sla_minutes=s.sla_minutes,
+                sla_minutes_by_currency=s.sla_minutes_by_currency,
             )
             existing = self.store.exceptions().join(scope, "booking_id", "left_semi")
             plan = plan_exception_changes(
