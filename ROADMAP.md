@@ -4,6 +4,7 @@ Planned improvements, roughly smallest first. Each one is a self-contained chang
 
 ## Small (under an hour)
 
+- [ ] **Compact when delete files pile up, not on a fixed batch count.** After each MERGE, log how many data files and delete files it added (from the Iceberg snapshot summary). Trigger in-stream compaction when open position-delete files on a table cross a threshold (`COMPACT_DELETE_FILE_THRESHOLD`), keeping `compact_every_batches` as a fallback. Unit-test the trigger on both sides of the threshold. Suggested by a reader on LinkedIn: keep compaction cheap for the writer and watch file growth per MERGE. Measuring the effect on batch time needs a live run, so record that separately and don't claim a speedup from unit tests.
 - [x] **Configurable SLA per currency.** Read SLA minutes from a small dict (e.g. INR bookings get 5 minutes) instead of one global value. Add a test in `tests/test_reconcile.py`.
 - [ ] **Partial-refund tolerance.** Let `REFUND_MISMATCH` ignore differences under a configurable amount (e.g. 1 cent from rounding). Test both sides of the threshold.
 - [ ] **Alert severity in Kafka messages.** Add `severity` (from the dbt `exception_types` seed) to the alert JSON in `store.publish_alerts`.
