@@ -136,3 +136,35 @@ def merge_exceptions(changes: DataFrame, table: str) -> None:
         )
         """
     )
+
+
+# Snapshot summary key -> name used in batch stats. Iceberg writes these on every
+# commit, so reading them costs one metadata query, not a scan of the manifests.
+SNAPSHOT_FILE_KEYS = {
+    "added-data-files": "added_data_files",
+    "added-delete-files": "added_delete_files",
+    "total-delete-files": "open_delete_files",
+}
+
+
+def file_stats_from_snapshot(snapshot_id: int, operation: str, summary: dict | None) -> dict:
+    """File counts from one snapshot's summary. Keys Iceberg left out (an empty
+    MERGE still commits, with no added-* keys) count as zero."""
+    summary = summary or {}
+    stats = {name: int(summary.get(key) or 0) for key, name in SNAPSHOT_FILE_KEYS.items()}
+    return {"snapshot_id": snapshot_id, "operation": operation, **stats}
+
+
+def latest_file_stats(spark, tables: dict[str, str]) -> dict[str, dict]:
+    """File counts from the newest snapshot of each table, in a single Spark action.
+
+    `tables` maps a short name to the fully qualified table. A table with no
+    snapshots yet is left out of the result.
+    """
+    parts = [
+        f"SELECT '{name}' AS tbl, snapshot_id, operation, summary FROM "
+        f"(SELECT * FROM {table}.snapshots ORDER BY committed_at DESC LIMIT 1)"
+        for name, table in tables.items()
+    ]
+    rows = spark.sql(" UNION ALL ".join(parts)).collect()
+    return {r.tbl: file_stats_from_snapshot(r.snapshot_id, r.operation, r.summary) for r in rows}

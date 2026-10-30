@@ -56,6 +56,8 @@ class Settings:
     slack_webhook_url: str | None
     # Currency -> SLA minutes. Currencies not listed use `sla_minutes`.
     sla_minutes_by_currency: Mapping[str, int] = field(default_factory=dict)
+    # Compact as soon as any table has this many open delete files (0 disables).
+    compact_delete_file_threshold: int = 0
 
     def sla_for(self, currency: str | None) -> int:
         """SLA minutes for a currency, falling back to the global default."""
@@ -80,6 +82,11 @@ class Settings:
             pushgateway=os.environ.get("PUSHGATEWAY_URL") or None,
             slack_webhook_url=os.environ.get("SLACK_WEBHOOK_URL") or None,
             sla_minutes_by_currency=parse_sla_overrides(_env("RECON_SLA_MINUTES_BY_CURRENCY", "")),
+            # Every merge-on-read MERGE that updates rows adds a delete file, and every read
+            # has to open all of them, so delete files are what actually slows the stream.
+            # 20 is a starting point, not a tuned value; the batch count above stays as a
+            # fallback for tables that only grow data files (bronze, insert-only payments).
+            compact_delete_file_threshold=int(_env("COMPACT_DELETE_FILE_THRESHOLD", "20")),
         )
 
 

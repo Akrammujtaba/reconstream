@@ -68,7 +68,7 @@ All tables are **Apache Iceberg** on S3 (SeaweedFS, an S3-compatible store, loca
 3. **Reconcile.** Spark re-checks only the bookings whose answer can have changed: ones that got new events in this batch, and ones whose SLA deadline just passed. Work per batch tracks batch size, not table size. Deadlines are judged on an **event-time watermark** (newest event seen minus 30s allowed lateness), not on when Spark happened to run.
 4. **Track.** Results are diffed against stored exceptions and MERGEd into **gold** as new, still-open, resolved, or re-opened. Only new and re-opened exceptions alert (Kafka topic, plus Slack if configured).
 5. **Backstop.** A nightly Airflow DAG re-runs the **same rule code** over the whole day with a wall-clock "now", catching anything the stream couldn't judge. It then runs Great Expectations on silver and builds dbt marts for finance.
-6. **Maintain.** Every 40 batches the stream compacts the small files and delete files its MERGEs create and expires old snapshots, so reads stay fast; a nightly DAG does a fuller pass.
+6. **Maintain.** After each batch the stream reads the Iceberg snapshot summaries and logs how many data and delete files its MERGEs added. When any table has 20 open delete files (`COMPACT_DELETE_FILE_THRESHOLD`), or after 40 batches as a fallback, it compacts them and expires old snapshots, so reads stay fast; a nightly DAG does a fuller pass.
 
 The design reasoning (why `foreachBatch` instead of a stream-stream join, why event time, how idempotency works) is in [docs/design-decisions.md](docs/design-decisions.md).
 

@@ -3,11 +3,13 @@
 import json
 from datetime import datetime, timedelta, timezone
 
+import pytest
 from memory_store import MemoryStore
 
 from reconstream.config import Settings
+from reconstream.lakehouse import file_stats_from_snapshot
 from reconstream.observability import StreamMetrics
-from reconstream.stream_processor import StreamProcessor
+from reconstream.stream_processor import StreamProcessor, compaction_reason
 
 T0 = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
 BOOKINGS_TOPIC = "pg.public.bookings"
@@ -187,6 +189,99 @@ def test_periodic_maintenance_runs_every_n_batches(spark):
     for i in range(4):
         proc.process(batch(spark, [cdc(f"b{i}", "PENDING", T0, lsn=i + 1)]), i)
     assert store.maintenance_runs == 2
+
+
+def snap(snapshot_id, open_deletes, added_data=1, added_deletes=1, operation="overwrite"):
+    return {"snapshot_id": snapshot_id, "operation": operation, "added_data_files": added_data,
+            "added_delete_files": added_deletes, "open_delete_files": open_deletes}
+
+
+@pytest.mark.parametrize("open_deletes, expected", [(19, None), (20, "delete_files"),
+                                                    (21, "delete_files")])
+def test_compaction_reason_on_each_side_of_delete_threshold(open_deletes, expected):
+    assert compaction_reason(batches_since=1, every=40, open_delete_files=open_deletes,
+                             threshold=20) == expected
+
+
+def test_compaction_reason_falls_back_to_batch_count():
+    assert compaction_reason(39, every=40, open_delete_files=0, threshold=20) is None
+    assert compaction_reason(40, every=40, open_delete_files=0, threshold=20) == "batch_count"
+    # Threshold 0 means "batch count only", which is the old behaviour.
+    assert compaction_reason(1, every=40, open_delete_files=500, threshold=0) is None
+    assert compaction_reason(1, every=0, open_delete_files=0, threshold=0) is None
+
+
+def test_compacts_when_delete_files_cross_threshold(spark):
+    store, proc, _ = make(spark, compact_delete_file_threshold=3, compact_every_batches=100)
+    store.snapshots = {"gold.recon_exceptions": snap(1, open_deletes=2)}
+    proc.process(batch(spark, [cdc("b1", "PENDING", T0, lsn=1)]), 0)
+    assert getattr(store, "maintenance_runs", 0) == 0
+    assert proc.last_stats["open_delete_files"] == 2
+
+    store.snapshots = {"gold.recon_exceptions": snap(2, open_deletes=3)}
+    proc.process(batch(spark, [cdc("b2", "PENDING", T0, lsn=2)]), 1)
+    assert store.maintenance_runs == 1
+    assert proc.batches_since_compaction == 0
+
+
+def test_file_growth_counts_each_snapshot_once_and_skips_compaction(spark):
+    store = MemoryStore(spark)
+    # Snapshots that exist before startup are remembered, not counted as this run's growth.
+    store.snapshots = {"silver.bookings": snap(10, open_deletes=4, added_data=7)}
+    proc = StreamProcessor(store, settings(), StreamMetrics(None), clock=Clock(T0))
+
+    store.snapshots = {"silver.bookings": snap(11, open_deletes=5, added_data=2),
+                       "gold.recon_exceptions": snap(20, open_deletes=1, added_deletes=1)}
+    proc.process(batch(spark, [cdc("b1", "PENDING", T0, lsn=1)]), 0)
+    assert (proc.last_stats["added_data_files"], proc.last_stats["added_delete_files"]) == (3, 2)
+    assert proc.last_stats["open_delete_files"] == 5
+
+    # gold had no new commit; bookings' newest snapshot is a compaction, not growth.
+    store.snapshots = {"silver.bookings": snap(12, open_deletes=0, added_data=1,
+                                               operation="replace"),
+                       "gold.recon_exceptions": snap(20, open_deletes=1)}
+    proc.process(batch(spark, [cdc("b2", "PENDING", T0, lsn=2)]), 1)
+    assert (proc.last_stats["added_data_files"], proc.last_stats["added_delete_files"]) == (0, 0)
+    assert proc.last_stats["open_delete_files"] == 1
+
+
+def test_unreadable_snapshots_fall_back_to_batch_count(spark):
+    store, proc, _ = make(spark, compact_delete_file_threshold=1, compact_every_batches=2)
+
+    def broken():
+        raise RuntimeError("metadata table unavailable")
+
+    store.file_stats = broken
+    for i in range(2):
+        proc.process(batch(spark, [cdc(f"b{i}", "PENDING", T0, lsn=i + 1)]), i)
+    assert store.maintenance_runs == 1
+
+
+def test_failed_compaction_does_not_retry_every_batch(spark):
+    store, proc, _ = make(spark, compact_delete_file_threshold=1, compact_every_batches=3)
+    store.snapshots = {"gold.recon_exceptions": snap(1, open_deletes=5)}
+    attempts = []
+
+    def failing(older_than):
+        attempts.append(older_than)
+        raise RuntimeError("commit conflict")
+
+    store.maintain = failing
+    for i in range(3):
+        proc.process(batch(spark, [cdc(f"b{i}", "PENDING", T0, lsn=i + 1)]), i)
+    # Batch 0 tries on the delete count and fails; batches 1-2 wait for the batch count.
+    assert len(attempts) == 1
+    proc.process(batch(spark, [cdc("b3", "PENDING", T0, lsn=4)]), 3)
+    assert len(attempts) == 2
+
+
+def test_snapshot_summary_without_added_keys_counts_as_zero():
+    # An empty MERGE still commits a snapshot; Iceberg omits the added-* keys then.
+    assert file_stats_from_snapshot(7, "overwrite", {"total-delete-files": "5"}) == {
+        "snapshot_id": 7, "operation": "overwrite", "added_data_files": 0,
+        "added_delete_files": 0, "open_delete_files": 5,
+    }
+    assert file_stats_from_snapshot(8, "append", None)["open_delete_files"] == 0
 
 
 def test_per_currency_sla_is_honoured_by_the_deadline_scope(spark):

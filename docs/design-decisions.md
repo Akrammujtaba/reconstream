@@ -64,7 +64,9 @@ The fix is `cache-enabled=false` on the catalog, so every read loads the current
 
 ### Why merge-on-read Iceberg tables, and what does it cost?
 
-Copy-on-write would rewrite whole data files on every MERGE. Merge-on-read writes small delete files instead, so streaming writes are cheap. The cost is read amplification: every batch adds files and delete files, and every read has to open them. So the stream itself runs `rewrite_data_files`, `rewrite_position_delete_files`, and `expire_snapshots` every 40 batches, and `reconstream_maintenance` does a fuller pass (including `rewrite_manifests`) nightly.
+Copy-on-write would rewrite whole data files on every MERGE. Merge-on-read writes small delete files instead, so streaming writes are cheap. The cost is read amplification: every batch adds files and delete files, and every read has to open them. So the stream itself runs `rewrite_data_files`, `rewrite_position_delete_files`, and `expire_snapshots`, and `reconstream_maintenance` does a fuller pass (including `rewrite_manifests`) nightly.
+
+In-stream compaction is triggered by the cost it removes, not by a timer. After each batch the processor reads the newest snapshot summary of each table it MERGEs into (one metadata query, no manifest scan) and logs `added_data_files`, `added_delete_files`, and `open_delete_files`. When any table reaches `COMPACT_DELETE_FILE_THRESHOLD` open delete files (default 20, a starting point, not a tuned value) it compacts. `STREAM_COMPACT_EVERY_BATCHES` (40) stays as a fallback, since bronze and insert-only payments grow data files without ever getting deletes. Compaction snapshots (`replace`) are not counted as growth, and a failed compaction falls back to the batch count instead of retrying every batch. Whether this lowers batch time has not been measured yet; that needs a live run.
 
 `write.merge.isolation-level = snapshot` reduces commit conflicts between the streaming job and the nightly batch, which both write to gold. Conflicts that still happen are retried by Airflow.
 

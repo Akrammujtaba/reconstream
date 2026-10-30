@@ -55,6 +55,14 @@ class IcebergStore:
     def merge_exceptions(self, changes: DataFrame) -> None:
         lakehouse.merge_exceptions(changes, self._t(GOLD_EXCEPTIONS))
 
+    def file_stats(self) -> dict[str, dict]:
+        """Newest snapshot's file counts for each table the stream MERGEs into.
+
+        Bronze is append-only and never gets delete files, so it is left out.
+        """
+        tables = (SILVER_BOOKINGS, SILVER_PAYMENTS, GOLD_EXCEPTIONS)
+        return lakehouse.latest_file_stats(self.spark, {t: self._t(t) for t in tables})
+
     def maintain(self, older_than: datetime) -> None:
         """Compact small data files, fold in delete files, and drop old snapshots.
 

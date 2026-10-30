@@ -88,6 +88,10 @@ class MemoryStore:
                            resolved_at=None, reopen_count=0)
                 self.e[s.exception_id] = row
 
+    def file_stats(self):
+        # Tests set this to whatever snapshot summaries they want the processor to see.
+        return getattr(self, "snapshots", {})
+
     def maintain(self, older_than):
         self.maintenance_runs = getattr(self, "maintenance_runs", 0) + 1
 

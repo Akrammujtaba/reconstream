@@ -9,8 +9,9 @@ Each micro-batch:
        - bookings whose SLA deadline fell between the previous and the new watermark
      so the work per batch tracks batch size, not table size
   5. merges the resulting changes into gold, alerts on new or re-opened ones
-  6. every N batches, compacts the small files and delete files that frequent
-     MERGEs leave behind, so reads don't slow down as the tables grow
+  6. records how many data and delete files the MERGEs added, and compacts
+     once delete files pile up on any table (or every N batches as a fallback),
+     so reads don't slow down as the tables grow
 
 Why foreachBatch + MERGE instead of a stream-stream join: exceptions must be
 able to change state later (a late payment resolves a MISSING_PAYMENT), and a
@@ -32,6 +33,23 @@ from reconstream.parsing import latest_booking_per_key, parse_booking_changes, p
 from reconstream.reconcile import CAPTURED, plan_exception_changes, reconcile, sla_interval
 
 log = logging.getLogger("reconstream.stream")
+
+
+def compaction_reason(batches_since: int, every: int, open_delete_files: int,
+                      threshold: int) -> str | None:
+    """Why to compact now, or None.
+
+    Delete files are the cost that matters: every merge-on-read update adds one,
+    and every later read has to open and apply all of them. Compacting on that
+    count does the work when it is needed instead of on a fixed schedule. The
+    batch count stays as a fallback, because data files also grow on tables that
+    never get deletes, and because the delete count may be unavailable.
+    """
+    if threshold and open_delete_files >= threshold:
+        return "delete_files"
+    if every and batches_since >= every:
+        return "batch_count"
+    return None
 
 
 def as_utc(value: datetime | None) -> datetime | None:
@@ -57,6 +75,13 @@ class StreamProcessor:
         # Watermark at the last reconciliation. None means "catch up over the horizon".
         self.evaluated_through: datetime | None = None
         self.batches_since_compaction = 0
+        # Newest snapshot id seen per table, so a snapshot's files are counted once.
+        self.seen_snapshots: dict[str, int] = {}
+        self.open_delete_files = 0
+        # Set after a failed delete-file-triggered compaction: the count would still be
+        # over the threshold, and retrying every batch would stall the stream.
+        self.delete_trigger_paused = False
+        self._record_file_growth({})
 
     def _initial_watermark(self) -> datetime | None:
         """Resume the watermark from silver so a restart doesn't re-flag old timeouts."""
@@ -73,6 +98,8 @@ class StreamProcessor:
             stats = self._process(batch, batch_id)
         finally:
             batch.unpersist()
+        if stats.get("input_rows", 0):
+            self._record_file_growth(stats)
         self._maybe_compact(stats)
         stats["duration_s"] = time.time() - started
         if self.watermark is not None:
@@ -226,20 +253,54 @@ class StreamProcessor:
         return {"evaluated_bookings": evaluated, "new_exceptions": new,
                 "resolved_exceptions": resolved}
 
+    def _record_file_growth(self, stats: dict) -> None:
+        """Add this batch's new data/delete files to `stats` and refresh the open
+        delete-file count, from each table's newest snapshot summary.
+
+        A snapshot is counted only the first time it is seen, and compaction
+        snapshots ('replace') are not counted as growth. Called once at startup
+        to remember the current snapshots without counting them.
+        """
+        try:
+            current = self.store.file_stats()
+        except Exception:  # metadata is for tuning; it must never stop the stream
+            log.warning("could not read snapshot summaries; compacting on batch count only",
+                        exc_info=True)
+            self.open_delete_files = 0
+            return
+        added_data = added_deletes = 0
+        for table, fs in current.items():
+            if fs["snapshot_id"] != self.seen_snapshots.get(table) and fs["operation"] != "replace":
+                added_data += fs["added_data_files"]
+                added_deletes += fs["added_delete_files"]
+            self.seen_snapshots[table] = fs["snapshot_id"]
+        self.open_delete_files = max((fs["open_delete_files"] for fs in current.values()),
+                                     default=0)
+        stats["added_data_files"] = added_data
+        stats["added_delete_files"] = added_deletes
+        stats["open_delete_files"] = self.open_delete_files
+
     def _maybe_compact(self, stats: dict) -> None:
-        every = self.settings.compact_every_batches
-        if not every or stats.get("input_rows", 0) == 0:
+        if stats.get("input_rows", 0) == 0:
             return
+        s = self.settings
         self.batches_since_compaction += 1
-        if self.batches_since_compaction < every:
+        threshold = 0 if self.delete_trigger_paused else s.compact_delete_file_threshold
+        reason = compaction_reason(self.batches_since_compaction, s.compact_every_batches,
+                                   self.open_delete_files, threshold)
+        if reason is None:
             return
+        log.info("compacting: %s (open delete files %d, batches since last %d)",
+                 reason, self.open_delete_files, self.batches_since_compaction)
         self.batches_since_compaction = 0
         started = time.time()
         try:
             self.store.maintain(older_than=self.clock() - timedelta(minutes=30))
             stats["compaction_s"] = time.time() - started
+            self.delete_trigger_paused = False
         except Exception:  # maintenance must never stop the stream
-            log.exception("table maintenance failed; will retry later")
+            self.delete_trigger_paused = True
+            log.exception("table maintenance failed; will retry on batch count")
 
     def _open_by_type(self) -> dict[str, tuple[int, int]]:
         rows = (
