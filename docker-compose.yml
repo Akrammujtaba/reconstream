@@ -20,6 +20,8 @@ x-lake-env: &lake-env
   RECON_SLA_MINUTES: ${RECON_SLA_MINUTES:-2}
   # Optional per-currency overrides, e.g. "INR=5,EUR=3". Unlisted currencies use the default.
   RECON_SLA_MINUTES_BY_CURRENCY: ${RECON_SLA_MINUTES_BY_CURRENCY:-}
+  # Refund vs. capture differences up to this many cents are not flagged (0 = exact match).
+  RECON_REFUND_TOLERANCE_CENTS: ${RECON_REFUND_TOLERANCE_CENTS:-0}
   RECON_ALLOWED_LATENESS_SECONDS: "30"
   SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
 

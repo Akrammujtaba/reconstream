@@ -23,6 +23,10 @@ The trade-off: with no traffic the watermark stops, so timeouts wait for the nex
 
 Captures are also de-duplicated on `payment_id`, in case a provider ever emits two events for one capture.
 
+### Why allow a refund tolerance, and why is it off by default?
+
+Providers round partial refunds (FX conversion, fee splits), so an exact `refunded != captured` check can raise a `REFUND_MISMATCH` for a single cent that nobody in finance will chase. `RECON_REFUND_TOLERANCE_CENTS` lets a difference of up to N cents, short or over, count as a full refund. The default is 0, so behaviour only changes when someone opts in, and a missing refund is still flagged in full. Because it is a plain threshold in `reconcile()`, raising it on a running system resolves the 1-cent exceptions already open the next time their booking is evaluated: the first batch after a restart re-checks the full horizon, and the nightly batch re-checks everything. A bad value (negative, not a whole number) fails at startup, like the SLA overrides.
+
 ### What makes every write idempotent?
 
 Spark can replay a micro-batch after a crash, so every write must be safe to repeat:

@@ -1,6 +1,6 @@
 import pytest
 
-from reconstream.config import Settings, parse_sla_overrides
+from reconstream.config import Settings, parse_refund_tolerance, parse_sla_overrides
 
 
 def test_parse_sla_overrides_normalises_currency_and_ignores_blanks():
@@ -30,3 +30,21 @@ def test_settings_without_overrides_behave_as_before(monkeypatch):
     s = Settings.from_env()
     assert s.sla_minutes_by_currency == {}
     assert s.sla_for("INR") == s.sla_minutes
+
+
+def test_parse_refund_tolerance_defaults_to_exact_match():
+    assert parse_refund_tolerance("") == 0
+    assert parse_refund_tolerance(" 1 ") == 1
+
+
+@pytest.mark.parametrize("raw", ["-1", "0.5", "one"])
+def test_parse_refund_tolerance_rejects_bad_values(raw):
+    with pytest.raises(ValueError, match="bad refund tolerance"):
+        parse_refund_tolerance(raw)
+
+
+def test_settings_from_env_reads_refund_tolerance(monkeypatch):
+    monkeypatch.setenv("RECON_REFUND_TOLERANCE_CENTS", "1")
+    assert Settings.from_env().refund_tolerance_cents == 1
+    monkeypatch.delenv("RECON_REFUND_TOLERANCE_CENTS")
+    assert Settings.from_env().refund_tolerance_cents == 0

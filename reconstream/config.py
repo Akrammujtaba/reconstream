@@ -38,6 +38,21 @@ def parse_sla_overrides(raw: str) -> dict[str, int]:
     return overrides
 
 
+def parse_refund_tolerance(raw: str) -> int:
+    """Parse RECON_REFUND_TOLERANCE_CENTS: a non-negative whole number of minor units.
+
+    Like the SLA overrides, a bad value fails at startup. A negative tolerance would
+    make every exact refund look like a mismatch, which is worse than no tolerance.
+    """
+    try:
+        value = int(raw.strip() or "0")
+    except ValueError:
+        raise ValueError(f"bad refund tolerance {raw!r}: expected whole cents, e.g. 1") from None
+    if value < 0:
+        raise ValueError(f"bad refund tolerance {raw!r}: must be >= 0")
+    return value
+
+
 @dataclass(frozen=True)
 class Settings:
     kafka_bootstrap: str
@@ -58,6 +73,8 @@ class Settings:
     sla_minutes_by_currency: Mapping[str, int] = field(default_factory=dict)
     # Compact as soon as any table has this many open delete files (0 disables).
     compact_delete_file_threshold: int = 0
+    # Refund vs. capture differences up to this many cents are not a REFUND_MISMATCH.
+    refund_tolerance_cents: int = 0
 
     def sla_for(self, currency: str | None) -> int:
         """SLA minutes for a currency, falling back to the global default."""
@@ -87,6 +104,8 @@ class Settings:
             # 20 is a starting point, not a tuned value; the batch count above stays as a
             # fallback for tables that only grow data files (bronze, insert-only payments).
             compact_delete_file_threshold=int(_env("COMPACT_DELETE_FILE_THRESHOLD", "20")),
+            # Default 0 keeps the exact-match rule; set to 1 to absorb rounding on partial refunds.
+            refund_tolerance_cents=parse_refund_tolerance(_env("RECON_REFUND_TOLERANCE_CENTS", "0")),
         )
 
 

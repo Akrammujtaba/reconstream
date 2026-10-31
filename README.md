@@ -180,7 +180,7 @@ Planned improvements are tracked in [ROADMAP.md](ROADMAP.md).
 - **AWS:** `infra/terraform` provisions the S3 lake bucket, Glue catalog databases, an EMR Serverless Spark application, and least-privilege IAM. Kafka would move to MSK and Airflow to MWAA.
 - **Scale:** partition `silver.payments` by `bucket(booking_id)` so the per-batch semi-joins prune files, and move compaction to a separate job so it never pauses the stream.
 - **Idle watermark:** with no traffic the event-time watermark stops moving, so timeouts wait for the next event or the nightly run. A heartbeat event per partition would keep it moving.
-- **Rules:** SLAs can already differ per currency (`RECON_SLA_MINUTES_BY_CURRENCY`, e.g. `INR=5`); partial-refund policies, multi-currency FX tolerance, and per-merchant SLAs would come from a config table rather than code constants.
+- **Rules:** SLAs can already differ per currency (`RECON_SLA_MINUTES_BY_CURRENCY`, e.g. `INR=5`), and refund rounding can be absorbed with `RECON_REFUND_TOLERANCE_CENTS` (default 0, exact match); per-market refund policies, multi-currency FX tolerance, and per-merchant SLAs would come from a config table rather than code constants.
 
 ## License
 

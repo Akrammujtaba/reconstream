@@ -107,6 +107,7 @@ def reconcile(
     as_of: datetime,
     sla_minutes: int,
     sla_minutes_by_currency: Mapping[str, int] | None = None,
+    refund_tolerance_cents: int = 0,
 ) -> DataFrame:
     """Return the exceptions that are true as of `as_of` (an event-time watermark).
 
@@ -118,7 +119,12 @@ def reconcile(
     sla_minutes_by_currency
                       optional per-currency overrides of `sla_minutes`; a booking uses
                       its own currency, an orphan payment (no booking) its capture currency
+    refund_tolerance_cents
+                      a cancelled booking whose refund differs from its capture by at most
+                      this many minor units is treated as fully refunded (0 = exact match)
     """
+    if refund_tolerance_cents < 0:
+        raise ValueError("refund_tolerance_cents must be >= 0")
     sla = sla_interval(F.col("booking_currency"), sla_minutes, sla_minutes_by_currency)
     orphan_sla = sla_interval(F.col("capture_currency"), sla_minutes, sla_minutes_by_currency)
     as_of_col = F.lit(as_of).cast("timestamp")
@@ -213,7 +219,10 @@ def reconcile(
         b.where(
             (F.col("status") == "CANCELLED")
             & (F.col("captured_cents") > 0)
-            & (F.col("refunded_cents") != F.col("captured_cents"))
+            # Providers round partial refunds (FX conversion, fee splits), so an exact
+            # comparison raises 1-cent REFUND_MISMATCH alerts nobody can act on. The
+            # tolerance is symmetric: over-refunds by a rounding cent are noise too.
+            & (F.abs(F.col("captured_cents") - F.col("refunded_cents")) > F.lit(refund_tolerance_cents))
             & ((F.col("cancelled_at") + sla) <= as_of_col)
         ),
         REFUND_MISMATCH,

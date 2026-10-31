@@ -227,6 +227,7 @@ class StreamProcessor:
                 as_of=self.watermark,
                 sla_minutes=s.sla_minutes,
                 sla_minutes_by_currency=s.sla_minutes_by_currency,
+                refund_tolerance_cents=s.refund_tolerance_cents,
             )
             existing = self.store.exceptions().join(scope, "booking_id", "left_semi")
             plan = plan_exception_changes(

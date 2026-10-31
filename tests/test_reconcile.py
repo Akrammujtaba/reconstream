@@ -32,11 +32,12 @@ def pay(bid, pid, amount=10000, ccy="USD", at=T0 + timedelta(seconds=10),
 
 
 def run(spark, bookings, payments, as_of=T0 + timedelta(minutes=10), known=None,
-        sla_by_currency=None):
+        sla_by_currency=None, refund_tolerance=0):
     b = spark.createDataFrame(bookings, BOOKING_SCHEMA)
     p = spark.createDataFrame(payments, PAYMENT_SCHEMA)
     k = known if known is not None else b.select("booking_id")
-    rows = R.reconcile(b, p, k, as_of, SLA, sla_by_currency).collect()
+    rows = R.reconcile(b, p, k, as_of, SLA, sla_by_currency,
+                       refund_tolerance_cents=refund_tolerance).collect()
     return {(r.booking_id, r.exception_type): r for r in rows}
 
 
@@ -139,6 +140,42 @@ def test_refund_mismatch_when_cancelled_without_full_refund(spark):
     out = run(spark, rows, payments)
     assert set(out) == {("partial", R.REFUND_MISMATCH), ("none", R.REFUND_MISMATCH)}
     assert out[("partial", R.REFUND_MISMATCH)].amount_at_risk_cents == 6000
+
+
+def _refunded(bid, refund_cents):
+    """A cancelled 100.00 booking, captured in full, refunded `refund_cents`, past its SLA."""
+    rows = [booking(bid, status="CANCELLED", cancelled=T0 + timedelta(minutes=1))]
+    pays = [pay(bid, f"p_{bid}"), pay(bid, f"r_{bid}", amount=refund_cents, etype=R.REFUNDED)]
+    return rows, pays
+
+
+def test_refund_tolerance_ignores_rounding_but_not_a_real_short_refund(spark):
+    rows, pays = [], []
+    for bid, refund in [("short_1c", 9999), ("over_1c", 10001), ("short_2c", 9998)]:
+        r, p = _refunded(bid, refund)
+        rows += r
+        pays += p
+    out = run(spark, rows, pays, refund_tolerance=1)
+    # Exactly at the tolerance (either direction) is fine; one cent past it is flagged.
+    assert set(out) == {("short_2c", R.REFUND_MISMATCH)}
+    assert out[("short_2c", R.REFUND_MISMATCH)].amount_at_risk_cents == 2
+
+
+def test_zero_refund_tolerance_keeps_exact_match(spark):
+    rows, pays = _refunded("short_1c", 9999)
+    out = run(spark, rows, pays)
+    assert out[("short_1c", R.REFUND_MISMATCH)].amount_at_risk_cents == 1
+
+
+def test_refund_tolerance_does_not_hide_a_missing_refund(spark):
+    rows = [booking("none", status="CANCELLED", cancelled=T0 + timedelta(minutes=1))]
+    out = run(spark, rows, [pay("none", "p1")], refund_tolerance=1)
+    assert out[("none", R.REFUND_MISMATCH)].amount_at_risk_cents == 10000
+
+
+def test_negative_refund_tolerance_is_rejected(spark):
+    with pytest.raises(ValueError, match="refund_tolerance_cents"):
+        run(spark, [], [], refund_tolerance=-1)
 
 
 def test_cancelled_before_payment_needs_no_refund(spark):
