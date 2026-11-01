@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql import functions as F
 
 from reconstream import lakehouse
@@ -18,9 +18,40 @@ from reconstream.config import (
     SILVER_BOOKINGS,
     SILVER_PAYMENTS,
 )
-from reconstream.reconcile import EXCEPTION_COLUMNS
+from reconstream.reconcile import EXCEPTION_COLUMNS, EXCEPTION_SEVERITY
 
-ALERT_COLUMNS = EXCEPTION_COLUMNS + ["evaluated_at", "detected_by"]
+ALERT_COLUMNS = EXCEPTION_COLUMNS + ["severity", "evaluated_at", "detected_by"]
+
+# Never expected (every type is in EXCEPTION_SEVERITY), but a new type added to
+# reconcile without a severity should still alert rather than vanish or crash.
+UNKNOWN_SEVERITY = "unknown"
+
+
+def severity_column(exception_type: Column) -> Column:
+    """Map an exception type to its severity as a CASE expression.
+
+    A handful of fixed entries, so a CASE beats joining a lookup DataFrame:
+    no extra shuffle and the mapping is visible in `explain()`.
+    """
+    items = iter(EXCEPTION_SEVERITY.items())
+    etype, severity = next(items)
+    expr = F.when(exception_type == etype, F.lit(severity))
+    for etype, severity in items:
+        expr = expr.when(exception_type == etype, F.lit(severity))
+    return expr.otherwise(F.lit(UNKNOWN_SEVERITY))
+
+
+def alert_messages(alerts: DataFrame) -> DataFrame:
+    """Shape alert rows into Kafka key/value pairs.
+
+    Keyed by booking_id so every alert for one booking lands on the same partition,
+    in order. Severity rides along in the payload so a consumer (pager, Slack
+    router) can decide who to wake without reading the dbt seed itself.
+    """
+    return alerts.withColumn("severity", severity_column(F.col("exception_type"))).select(
+        F.col("booking_id").alias("key"),
+        F.to_json(F.struct(*ALERT_COLUMNS)).alias("value"),
+    )
 
 
 class IcebergStore:
@@ -87,10 +118,7 @@ class IcebergStore:
         if not (self.kafka_bootstrap and self.alerts_topic):
             return
         (
-            alerts.select(
-                F.col("booking_id").alias("key"),
-                F.to_json(F.struct(*ALERT_COLUMNS)).alias("value"),
-            )
+            alert_messages(alerts)
             .write.format("kafka")
             .option("kafka.bootstrap.servers", self.kafka_bootstrap)
             .option("topic", self.alerts_topic)

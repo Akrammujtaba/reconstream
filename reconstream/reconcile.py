@@ -29,6 +29,19 @@ EXCEPTION_TYPES = (
     ORPHAN_PAYMENT,
 )
 
+# Severity per exception type, so alert consumers can route without a lookup.
+# The dbt seed `dbt/seeds/reference/exception_types.csv` is the source of truth;
+# it is copied here because the Spark image ships only this package, not dbt/.
+# tests/test_store.py fails if the two ever drift apart.
+EXCEPTION_SEVERITY = {
+    DUPLICATE_CHARGE: "critical",
+    AMOUNT_MISMATCH: "high",
+    CURRENCY_MISMATCH: "high",
+    MISSING_PAYMENT: "high",
+    REFUND_MISMATCH: "high",
+    ORPHAN_PAYMENT: "medium",
+}
+
 CAPTURED = "payment.captured"
 REFUNDED = "refund.succeeded"
 

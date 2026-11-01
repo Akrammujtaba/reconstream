@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import json
+
+from reconstream.store import alert_messages
+
 BOOKINGS = (
     "booking_id string, guest_id string, listing_id string, status string, amount_cents long, "
     "currency string, created_at timestamp, confirmed_at timestamp, cancelled_at timestamp, "
@@ -96,4 +100,5 @@ class MemoryStore:
         self.maintenance_runs = getattr(self, "maintenance_runs", 0) + 1
 
     def publish_alerts(self, alerts):
-        self.alerts.extend(r.asDict() for r in alerts.collect())
+        # Go through the real Kafka serialization so tests see the exact payload.
+        self.alerts.extend(json.loads(r.value) for r in alert_messages(alerts).collect())

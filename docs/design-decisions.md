@@ -27,6 +27,10 @@ Captures are also de-duplicated on `payment_id`, in case a provider ever emits t
 
 Providers round partial refunds (FX conversion, fee splits), so an exact `refunded != captured` check can raise a `REFUND_MISMATCH` for a single cent that nobody in finance will chase. `RECON_REFUND_TOLERANCE_CENTS` lets a difference of up to N cents, short or over, count as a full refund. The default is 0, so behaviour only changes when someone opts in, and a missing refund is still flagged in full. Because it is a plain threshold in `reconcile()`, raising it on a running system resolves the 1-cent exceptions already open the next time their booking is evaluated: the first batch after a restart re-checks the full horizon, and the nightly batch re-checks everything. A bad value (negative, not a whole number) fails at startup, like the SLA overrides.
 
+### Why is alert severity copied into Python instead of read from the dbt seed?
+
+The dbt seed `exception_types.csv` owns severity and owner per type, but the Spark image ships only the `reconstream` package, and reading a CSV from another project at runtime is a hidden deploy dependency. So `EXCEPTION_SEVERITY` in `reconcile.py` is a copy, and `tests/test_store.py` reads the seed and fails if the two differ or a type has no severity. Severity is added as a CASE expression, not a join, because it is six fixed rows. A type with no mapping alerts as `unknown` instead of being dropped.
+
 ### What makes every write idempotent?
 
 Spark can replay a micro-batch after a crash, so every write must be safe to repeat:

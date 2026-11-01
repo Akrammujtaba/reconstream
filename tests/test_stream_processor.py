@@ -132,6 +132,7 @@ def test_double_charge_alerts_once_across_batches(spark):
     proc.process(batch(spark, [cdc("b9", "CONFIRMED", T0 + timedelta(seconds=30), lsn=2)]), 2)
     assert exc(store, "b1")["DUPLICATE_CHARGE"]["actual_amount_cents"] == 20000
     assert [a["exception_type"] for a in store.alerts] == ["DUPLICATE_CHARGE"]
+    assert store.alerts[0]["severity"] == "critical"
 
 
 def test_out_of_order_cdc_keeps_newest_state(spark):
