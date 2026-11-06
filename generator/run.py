@@ -1,6 +1,7 @@
 """Run the simulator against the real stack: bookings to Postgres, payments to the webhook.
 
     python run.py --rate 5 --duration 1800
+    python run.py --only DUPLICATE_CHARGE --fault-scale 5   # demo one scenario
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 import psycopg2
 from psycopg2.extras import Json
-from simulator import Config, Simulator
+from simulator import FAULTS, Config, Simulator, only_fault
 
 log = logging.getLogger("generator")
 
@@ -85,10 +86,14 @@ def main() -> None:
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--fault-scale", type=float, default=1.0,
                    help="multiply every fault rate, e.g. 2 for a noisier demo")
+    p.add_argument("--only", choices=sorted(FAULTS), default=None,
+                   help="inject just this fault type (noise stays on), to demo one scenario")
     args = p.parse_args()
 
     sla_minutes = int(os.environ.get("RECON_SLA_MINUTES", "2"))
     cfg = Config(bookings_per_second=args.rate, sla=timedelta(minutes=sla_minutes))
+    if args.only:
+        cfg = only_fault(cfg, args.only)
     cfg.fault_rates = {k: v * args.fault_scale for k, v in cfg.fault_rates.items()}
     cfg.orphan_rate *= args.fault_scale
 
@@ -110,7 +115,8 @@ def main() -> None:
 
     started = time.time()
     last_log = started
-    log.info("generating %.1f bookings/s, SLA %d min", args.rate, sla_minutes)
+    log.info("generating %.1f bookings/s, SLA %d min, faults: %s",
+             args.rate, sla_minutes, args.only or "all types")
     while not stopping and (args.duration == 0 or time.time() - started < args.duration):
         sim.tick(datetime.now(timezone.utc))
         if time.time() - last_log > 30:

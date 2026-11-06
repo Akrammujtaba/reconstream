@@ -110,6 +110,13 @@ docker compose ps                   # wait until services are healthy / exited 0
 
 The generator starts automatically at 2 bookings per second. To change the rate: `GEN_RATE=5 docker compose up -d generator`.
 
+To demo one scenario at a time, stop the generator and run it with `--only` (noise like duplicate deliveries stays on, so you can see the one fault caught and the noise ignored):
+
+```bash
+docker compose stop generator
+docker compose run --rm generator --only DUPLICATE_CHARGE --fault-scale 5
+```
+
 | What | Where |
 |---|---|
 | Grafana dashboard | http://localhost:3000 (opens on the ReconStream dashboard) |

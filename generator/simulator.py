@@ -19,7 +19,7 @@ import itertools
 import random
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from typing import Protocol
 
@@ -67,6 +67,25 @@ class Config:
     cancel_rate: float = 0.05
     abandon_rate: float = 0.02
     max_delivery_delay: timedelta = timedelta(seconds=20)
+
+
+def only_fault(cfg: Config, fault: str) -> Config:
+    """Return a copy of `cfg` that injects one fault type and no others.
+
+    Used by `run.py --only` to demo a single scenario: with every type mixed
+    in, it is hard to point at one Grafana spike and say what caused it.
+
+    The chosen type keeps its configured rate, so `--fault-scale` still works
+    on top. Orphans are driven by `orphan_rate`, not `fault_rates`, so that is
+    zeroed too unless ORPHAN_PAYMENT is the one asked for. Noise (duplicate
+    deliveries, malformed payloads, failed attempts, delays) stays on on
+    purpose: the demo should show the one fault caught and the noise ignored.
+    """
+    if fault not in FAULTS:
+        raise ValueError(f"unknown fault type {fault!r}; expected one of {sorted(FAULTS)}")
+    rates = {k: (v if k == fault else 0.0) for k, v in cfg.fault_rates.items()}
+    return replace(cfg, fault_rates=rates,
+                   orphan_rate=cfg.orphan_rate if fault == "ORPHAN_PAYMENT" else 0.0)
 
 
 def iso(t: datetime) -> str:
