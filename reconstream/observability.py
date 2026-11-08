@@ -19,14 +19,30 @@ class StreamMetrics:
         self.gateway = gateway
         self.job = job
         self.totals: dict[str, float] = defaultdict(float)
+        # (exception_type, "opened" | "resolved") -> cumulative count since start.
+        self.changes_by_type: dict[tuple[str, str], float] = defaultdict(float)
 
-    def push(self, batch: dict, open_by_type: dict[str, tuple[int, int]]) -> None:
+    def push(self, batch: dict, open_by_type: dict[str, tuple[int, int]],
+             changes_by_type: dict[tuple[str, str], int] | None = None) -> None:
         for key in ("bookings_events", "payment_events", "duplicate_deliveries",
                     "new_exceptions", "resolved_exceptions"):
             self.totals[key] += batch.get(key, 0)
+        for key, n in (changes_by_type or {}).items():
+            self.changes_by_type[key] += n
         if not self.gateway:
             return
+        try:
+            push_to_gateway(self.gateway, job=self.job,
+                            registry=self.registry(batch, open_by_type))
+        except Exception as exc:  # metrics must never take the pipeline down
+            log.warning("pushgateway unavailable: %s", exc)
 
+    def registry(self, batch: dict, open_by_type: dict[str, tuple[int, int]]) -> CollectorRegistry:
+        """Build the snapshot that is pushed after a batch.
+
+        Separate from `push` so tests (and the dashboard check) can read the
+        exact metric names and values without a Pushgateway.
+        """
         reg = CollectorRegistry()
         Gauge("reconstream_batch_duration_seconds", "Last micro-batch duration",
               registry=reg).set(batch.get("duration_s", 0))
@@ -49,10 +65,15 @@ class StreamMetrics:
         for etype, (count, risk) in open_by_type.items():
             open_g.labels(exception_type=etype).set(count)
             risk_g.labels(exception_type=etype).set(risk)
-        try:
-            push_to_gateway(self.gateway, job=self.job, registry=reg)
-        except Exception as exc:  # metrics must never take the pipeline down
-            log.warning("pushgateway unavailable: %s", exc)
+        # A Gauge holding a running total, like reconstream_events_total: the
+        # Pushgateway keeps whatever value was pushed last, and PromQL rate()
+        # treats a drop after a restart as a counter reset.
+        changes_g = Gauge("reconstream_exception_changes_total",
+                          "Cumulative exceptions opened or resolved, by type",
+                          ["exception_type", "change"], registry=reg)
+        for (etype, change), value in self.changes_by_type.items():
+            changes_g.labels(exception_type=etype, change=change).set(value)
+        return reg
 
 
 def post_slack_summary(webhook_url: str | None, alerts: list[dict]) -> None:

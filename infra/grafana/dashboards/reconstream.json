@@ -577,6 +577,71 @@
           "sort": "desc"
         }
       }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Exceptions opened vs resolved by type (per 15 min)",
+      "description": "Opened (new or re-opened) and auto-resolved exceptions per type. Opened bars above the line, resolved below it, so a type that only opens stands out.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 24,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (exception_type) (increase(reconstream_exception_changes_total{change=\"opened\"}[15m]))",
+          "legendFormat": "{{exception_type}} opened",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "-sum by (exception_type) (increase(reconstream_exception_changes_total{change=\"resolved\"}[15m]))",
+          "legendFormat": "{{exception_type}} resolved",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "fillOpacity": 30,
+            "lineWidth": 1,
+            "drawStyle": "bars"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
     }
   ],
   "templating": {

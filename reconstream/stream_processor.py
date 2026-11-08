@@ -59,6 +59,29 @@ def as_utc(value: datetime | None) -> datetime | None:
     return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
+def changes_by_type(plan_stats) -> dict[tuple[str, str], int]:
+    """Count this batch's opened and resolved exceptions per type.
+
+    The dashboard already shows total opened vs resolved, but that hides which
+    type is piling up: a steady stream of MISSING_PAYMENT that later resolves is
+    normal late-payment noise, while DUPLICATE_CHARGE opening with nothing
+    resolving is money that needs a human. "Opened" means the same as
+    `new_exceptions` (new or re-opened, i.e. alerted); an UPSERT of an already
+    open exception is not a change and is not counted.
+    """
+    out: dict[tuple[str, str], int] = {}
+    for r in plan_stats:
+        if r["change"] == "UPSERT" and r["alert"]:
+            change = "opened"
+        elif r["change"] == "RESOLVE":
+            change = "resolved"
+        else:
+            continue
+        key = (r["exception_type"], change)
+        out[key] = out.get(key, 0) + r["count"]
+    return out
+
+
 class StreamProcessor:
     def __init__(self, store, settings: Settings, metrics: StreamMetrics | None = None,
                  clock=lambda: datetime.now(timezone.utc)):
@@ -104,7 +127,9 @@ class StreamProcessor:
         stats["duration_s"] = time.time() - started
         if self.watermark is not None:
             stats["watermark_lag_s"] = (self.clock() - self.watermark).total_seconds()
-        self.metrics.push(stats, self._open_by_type())
+        # Per-type counts are a dict, so they go to metrics but not the numeric log line.
+        changes = stats.pop("changes_by_type", {})
+        self.metrics.push(stats, self._open_by_type(), changes)
         self.last_stats = stats
         log.info("batch %s: %s", batch_id, {k: round(v, 2) for k, v in stats.items()})
 
@@ -218,7 +243,8 @@ class StreamProcessor:
             evaluated = scope.count()
             if evaluated == 0:
                 self.evaluated_through = self.watermark
-                return {"evaluated_bookings": 0, "new_exceptions": 0, "resolved_exceptions": 0}
+                return {"evaluated_bookings": 0, "new_exceptions": 0, "resolved_exceptions": 0,
+                        "changes_by_type": {}}
 
             current = reconcile(
                 bookings.join(scope, "booking_id", "left_semi"),
@@ -234,7 +260,7 @@ class StreamProcessor:
                 current, existing, scope, evaluated_at=self.clock(), detected_by="stream"
             ).persist()
             try:
-                plan_stats = plan.groupBy("change", "alert").count().collect()
+                plan_stats = plan.groupBy("change", "alert", "exception_type").count().collect()
                 if plan_stats:
                     self.store.merge_exceptions(plan)
                     alerts = plan.where(F.col("alert"))
@@ -252,7 +278,8 @@ class StreamProcessor:
         new = sum(r["count"] for r in plan_stats if r["change"] == "UPSERT" and r["alert"])
         resolved = sum(r["count"] for r in plan_stats if r["change"] == "RESOLVE")
         return {"evaluated_bookings": evaluated, "new_exceptions": new,
-                "resolved_exceptions": resolved}
+                "resolved_exceptions": resolved,
+                "changes_by_type": changes_by_type(plan_stats)}
 
     def _record_file_growth(self, stats: dict) -> None:
         """Add this batch's new data/delete files to `stats` and refresh the open

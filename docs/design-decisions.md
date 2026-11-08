@@ -31,6 +31,10 @@ Providers round partial refunds (FX conversion, fee splits), so an exact `refund
 
 The dbt seed `exception_types.csv` owns severity and owner per type, but the Spark image ships only the `reconstream` package, and reading a CSV from another project at runtime is a hidden deploy dependency. So `EXCEPTION_SEVERITY` in `reconcile.py` is a copy, and `tests/test_store.py` reads the seed and fails if the two differ or a type has no severity. Severity is added as a CASE expression, not a join, because it is six fixed rows. A type with no mapping alerts as `unknown` instead of being dropped.
 
+### Why count opened and resolved exceptions per type?
+
+The total opened-vs-resolved panel hides which type is piling up. Lots of `MISSING_PAYMENT` that open and then resolve is normal late-payment noise; `DUPLICATE_CHARGE` opening with nothing resolving is money a human has to chase. So each batch counts its plan rows by type and change, and the stream pushes `reconstream_exception_changes_total{exception_type, change}`. "Opened" means new or re-opened, the same rows that alert; an exception that is simply still open is not counted. The dashboard panel plots opened above zero and resolved below it, per 15 minutes. Like `reconstream_events_total`, it is a running total held in a Gauge, because the Pushgateway keeps the last pushed value and `increase()` handles the reset after a restart. `tests/test_observability.py` also fails if a dashboard query names a metric the code no longer emits, since that would leave a panel empty without any error.
+
 ### What makes every write idempotent?
 
 Spark can replay a micro-batch after a crash, so every write must be safe to repeat:

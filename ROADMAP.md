@@ -9,7 +9,7 @@ Planned improvements, roughly smallest first. Each one is a self-contained chang
 - [x] **Partial-refund tolerance.** Let `REFUND_MISMATCH` ignore differences under a configurable amount (e.g. 1 cent from rounding). Test both sides of the threshold.
 - [x] **Alert severity in Kafka messages.** Add `severity` (from the dbt `exception_types` seed) to the alert JSON in `store.publish_alerts`.
 - [x] **Generator CLI flag for a single fault type.** `--only DUPLICATE_CHARGE` to demo one scenario at a time.
-- [ ] **Grafana panel: exceptions resolved vs. opened, by type.** Edit `infra/grafana/dashboards/reconstream.json`.
+- [x] **Grafana panel: exceptions resolved vs. opened, by type.** Edit `infra/grafana/dashboards/reconstream.json`.
 - [ ] **dbt test: no booking has both DUPLICATE_CHARGE and MISSING_PAYMENT open.** Singular test in `dbt/tests/`.
 - [x] **Webhook: reject events dated in the future** (more than 5 minutes ahead of server time). Add a test case.
 - [ ] **Evaluator: CSV output option** alongside the markdown table.

@@ -307,3 +307,18 @@ def test_per_currency_sla_is_honoured_by_the_deadline_scope(spark):
     assert inr["status"] == "OPEN"
     assert inr["due_at"] == (T0 + timedelta(minutes=5)).replace(tzinfo=None)
     assert [a["booking_id"] for a in store.alerts] == ["usd", "inr"]
+
+
+def test_opened_and_resolved_are_counted_per_type(spark):
+    store, proc, clock = make(spark)
+    proc.process(batch(spark, [cdc("b1", "CONFIRMED", T0, lsn=1)]), 0)
+    clock.now = T0 + timedelta(minutes=3)
+    proc.process(batch(spark, [cdc("b2", "CONFIRMED", T0 + timedelta(minutes=3), lsn=2)]), 1)
+    clock.now = T0 + timedelta(minutes=4)
+    proc.process(batch(spark, [payment("e1", "b1", T0 + timedelta(minutes=4))]), 2)
+
+    assert dict(proc.metrics.changes_by_type) == {
+        ("MISSING_PAYMENT", "opened"): 1,
+        ("MISSING_PAYMENT", "resolved"): 1,
+    }
+    assert "changes_by_type" not in proc.last_stats  # kept out of the numeric log line
