@@ -161,7 +161,7 @@ cd dbt && dbt seed --target ci --profiles-dir . && dbt build --target ci --profi
 - **Stream processor:** a multi-batch scenario where a missing payment is flagged on event time and then auto-resolved by a late payment; wall-clock lag that must not create false timeouts; restart recovery of the watermark
 - **Generator to rules, end to end:** a simulated run's detections compared against the ground truth
 - **Webhook:** signature check, every contract violation going to the DLQ, Kafka outage returning `503`
-- **dbt:** 26 tests on DuckDB fixtures, including SCD2 integrity
+- **dbt:** 18 data tests on DuckDB fixtures, including SCD2 integrity and no booking left open as both `DUPLICATE_CHARGE` and `MISSING_PAYMENT`
 - **CI** (GitHub Actions): lint, unit tests, dbt build, Airflow DAG import, Docker build, Terraform validate
 
 ## Repository layout
