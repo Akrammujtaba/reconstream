@@ -7,11 +7,13 @@ gold.recon_exceptions (what the pipeline found) and reports, per fault type:
   latency     first_detected_at - detectable_at (p50 / p95)
 
     python evaluation/evaluate.py            # prints a table, writes evaluation/results.md
+    python evaluation/evaluate.py --csv evaluation/history.csv   # also appends CSV rows
 """
 
 from __future__ import annotations
 
 import argparse
+import csv
 import os
 from collections import defaultdict
 from dataclasses import dataclass
@@ -147,6 +149,52 @@ def to_markdown(r: dict, throughput: str | None = None) -> str:
     return "\n".join(lines) + "\n"
 
 
+CSV_FIELDS = ["evaluated_at", "since", "fault_type", "injected", "detected", "recall",
+              "precision", "false_positives", "latency_p50_s", "latency_p95_s"]
+
+
+def to_csv_rows(r: dict) -> list[dict]:
+    """One row per fault type plus an ``ALL`` row with the overall numbers.
+
+    Values are raw numbers (ratios 0-1, seconds), not the rounded strings in
+    the markdown, so runs can be charted or diffed in a spreadsheet. Missing
+    values are left empty. Precision and false positives are only defined
+    across all types (a false positive has no injected fault type), so they
+    are empty on per-type rows.
+    """
+    evaluated_at = r["now"].isoformat()
+    since = r["since"].isoformat() if r.get("since") else ""
+    rows = [{
+        "evaluated_at": evaluated_at, "since": since, "fault_type": "ALL",
+        "injected": r["injected"], "detected": r["detected"], "recall": r["recall"],
+        "precision": r["precision"], "false_positives": r["false_positives"],
+        "latency_p50_s": r["latency_p50_s"], "latency_p95_s": r["latency_p95_s"],
+    }]
+    for k, v in r["per_type"].items():
+        rows.append({
+            "evaluated_at": evaluated_at, "since": since, "fault_type": k,
+            "injected": v["injected"], "detected": v["detected"], "recall": v["recall"],
+            "precision": None, "false_positives": None,
+            "latency_p50_s": v["p50_s"], "latency_p95_s": v["p95_s"],
+        })
+    return [{f: ("" if row[f] is None else row[f]) for f in CSV_FIELDS} for row in rows]
+
+
+def append_csv(r: dict, path: str) -> None:
+    """Append this run's rows to `path`, writing the header only for a new file.
+
+    Appending (rather than overwriting like results.md) keeps a history, so a
+    change such as a new partitioning scheme can be compared against earlier
+    runs from the same file.
+    """
+    new_file = not os.path.exists(path) or os.path.getsize(path) == 0
+    with open(path, "a", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=CSV_FIELDS)
+        if new_file:
+            w.writeheader()
+        w.writerows(to_csv_rows(r))
+
+
 def _aware(dt: datetime | None) -> datetime | None:
     if dt is None:
         return None
@@ -167,6 +215,8 @@ def main() -> None:
                    default=float(os.environ.get("EVAL_SINCE_MINUTES", "0")) or None,
                    help="only score the last N minutes (steady state after a restart)")
     p.add_argument("--out", default=os.path.join(os.path.dirname(__file__), "results.md"))
+    p.add_argument("--csv", default=os.environ.get("EVAL_CSV") or None,
+                   help="also append per-type results to this CSV file (kept across runs)")
     args = p.parse_args()
 
     with psycopg2.connect(args.pg) as conn, conn.cursor() as cur:
@@ -194,6 +244,8 @@ def main() -> None:
     print(md)
     with open(args.out, "w") as f:
         f.write(md)
+    if args.csv:
+        append_csv(report, args.csv)
 
 
 if __name__ == "__main__":

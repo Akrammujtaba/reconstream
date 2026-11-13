@@ -94,6 +94,7 @@ Measured on a laptop (Docker Desktop, single-node Spark in local mode) after 30 
 Per type (steady state), p50 / p95: duplicate charge 29s / 53s, amount mismatch 26s / 48s, currency mismatch 29s / 34s, orphan payment 50s / 67s, missing payment 53s / 97s, refund mismatch 63s / 102s. Deadline-based types take longer because they wait out the 30-second allowed lateness before judging.
 
 To reproduce: run `docker compose run --rm evaluator` after the stack has generated traffic for 20+ minutes. Set `EVAL_SINCE_MINUTES=15` to score only the most recent window.
+Set `EVAL_CSV=/out/history.csv` to also append the numbers to `evaluation/history.csv` (one row per fault type plus an `ALL` row, raw values), so runs before and after a change can be compared in one file.
 
 In unit tests, a 15-minute simulated run with every fault type, pushed through the parsing and reconciliation code, finds **exactly** the injected faults: no misses, no false positives, and every late payment resolved (`tests/test_generator_end_to_end.py`).
 

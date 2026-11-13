@@ -272,6 +272,7 @@ services:
       TRINO_HOST: trino
       TRINO_PORT: "8080"
       EVAL_SINCE_MINUTES: ${EVAL_SINCE_MINUTES:-0}
+      EVAL_CSV: ${EVAL_CSV:-}
     volumes:
       - ./evaluation:/out
     command: ["--out", "/out/results.md"]

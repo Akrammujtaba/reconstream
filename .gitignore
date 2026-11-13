@@ -12,5 +12,6 @@ dbt/dbt_packages/
 *.duckdb
 .env
 evaluation/results.md
+evaluation/*.csv
 infra/terraform/.terraform/
 infra/terraform/*.tfstate*

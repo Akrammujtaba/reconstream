@@ -12,7 +12,7 @@ Planned improvements, roughly smallest first. Each one is a self-contained chang
 - [x] **Grafana panel: exceptions resolved vs. opened, by type.** Edit `infra/grafana/dashboards/reconstream.json`.
 - [x] **dbt test: no booking has both DUPLICATE_CHARGE and MISSING_PAYMENT open.** Singular test in `dbt/tests/`.
 - [x] **Webhook: reject events dated in the future** (more than 5 minutes ahead of server time). Add a test case.
-- [ ] **Evaluator: CSV output option** alongside the markdown table.
+- [x] **Evaluator: CSV output option** alongside the markdown table.
 
 ## Medium (a few sessions)
 
