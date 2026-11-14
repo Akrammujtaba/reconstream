@@ -3,7 +3,9 @@
 Each micro-batch:
   1. lands raw records in bronze (replay log)
   2. upserts bookings (CDC) and payments (webhooks) into silver, idempotently
-  3. advances an event-time watermark: newest event seen minus allowed lateness
+  3. advances an event-time watermark: newest event seen minus allowed lateness.
+     Heartbeats on the payments topic move it too, so deadlines still pass
+     when traffic is quiet; they are never written to bronze or silver
   4. re-reconciles only the bookings whose answer can have changed:
        - bookings or payments that arrived in this batch, and
        - bookings whose SLA deadline fell between the previous and the new watermark
@@ -29,7 +31,13 @@ from pyspark.sql import functions as F
 
 from reconstream.config import Settings
 from reconstream.observability import StreamMetrics, post_slack_summary
-from reconstream.parsing import latest_booking_per_key, parse_booking_changes, parse_payment_events
+from reconstream.parsing import (
+    is_heartbeat,
+    latest_booking_per_key,
+    parse_booking_changes,
+    parse_heartbeats,
+    parse_payment_events,
+)
 from reconstream.reconcile import CAPTURED, plan_exception_changes, reconcile, sla_interval
 
 log = logging.getLogger("reconstream.stream")
@@ -50,6 +58,20 @@ def compaction_reason(batches_since: int, every: int, open_delete_files: int,
     if every and batches_since >= every:
         return "batch_count"
     return None
+
+
+def heartbeat_watermark(latest: dict[int, datetime], partitions: int) -> datetime | None:
+    """Event time that every partition of a topic has provably reached, or None.
+
+    A heartbeat stamped T on one partition only proves that partition is caught
+    up to T. Another partition can still be behind (Spark splits
+    maxOffsetsPerTrigger across partitions, and a broker can be slow), and its
+    unread events are older than T. So the safe answer is the oldest of the
+    newest heartbeats, and nothing until every partition has sent one.
+    """
+    if partitions <= 0 or any(p not in latest for p in range(partitions)):
+        return None
+    return min(latest[p] for p in range(partitions))
 
 
 def as_utc(value: datetime | None) -> datetime | None:
@@ -104,6 +126,11 @@ class StreamProcessor:
         # Set after a failed delete-file-triggered compaction: the count would still be
         # over the threshold, and retrying every batch would stall the stream.
         self.delete_trigger_paused = False
+        # Newest heartbeat per payments-topic partition, and that topic's partition
+        # count as the emitter saw it. Not restored after a restart: the watermark
+        # resumes from silver, and each partition sends a new heartbeat within seconds.
+        self.heartbeats: dict[int, datetime] = {}
+        self.heartbeat_partitions = 0
         self._record_file_growth({})
 
     def _initial_watermark(self) -> datetime | None:
@@ -121,7 +148,9 @@ class StreamProcessor:
             stats = self._process(batch, batch_id)
         finally:
             batch.unpersist()
-        if stats.get("input_rows", 0):
+        # A heartbeat-only batch can still MERGE into gold when a deadline passes.
+        if stats.get("input_rows", 0) or stats.get("new_exceptions") or stats.get(
+                "resolved_exceptions"):
             self._record_file_growth(stats)
         self._maybe_compact(stats)
         stats["duration_s"] = time.time() - started
@@ -137,9 +166,25 @@ class StreamProcessor:
         """Kept to as few Spark actions as possible: each one costs a job launch,
         and with small batches that fixed cost dominates."""
         s = self.settings
-        per_topic = {r["topic"]: r["count"] for r in batch.groupBy("topic").count().collect()}
+        counts = batch.groupBy("topic", is_heartbeat().alias("hb")).count().collect()
+        per_topic = {r["topic"]: r["count"] for r in counts if not r["hb"]}
+        heartbeats = sum(r["count"] for r in counts if r["hb"])
+        # Heartbeats are not data: they don't count as input, so they never trigger
+        # compaction or land in bronze, which stays a replay log of real events.
         stats: dict = {"input_rows": sum(per_topic.values())}
+        heartbeat_time = None
+        if heartbeats:
+            stats["heartbeats"] = heartbeats
+            heartbeat_time = self._record_heartbeats(batch)
+            batch = batch.where(~is_heartbeat())
         if stats["input_rows"] == 0:
+            if heartbeat_time is not None:
+                before = self.watermark
+                self._advance_watermark([heartbeat_time])
+                if self.watermark is not None and self.watermark != before:
+                    # Nothing touched; only bookings whose deadline just passed are checked.
+                    no_touched = batch.sparkSession.createDataFrame([], "booking_id string")
+                    stats.update(self._reconcile(no_touched))
             return stats
 
         self.store.append_bronze(batch, batch_id)
@@ -170,7 +215,7 @@ class StreamProcessor:
             if p.n:
                 self.store.merge_payments(payments, occurred_range=(p.lo, p.hi))
 
-            self._advance_watermark([b.newest, p.hi])
+            self._advance_watermark([b.newest, p.hi, heartbeat_time])
             if self.watermark is not None:
                 stats.update(self._reconcile(touched))
         finally:
@@ -193,6 +238,25 @@ class StreamProcessor:
         ).select("event_id")
         unseen = new_events.join(known, "event_id", "left_anti").count()
         return max(delivered - unseen, 0)
+
+    def _record_heartbeats(self, batch: DataFrame) -> datetime | None:
+        """Remember the newest heartbeat per payments partition; return the time all
+        partitions have reached, capped at our own clock.
+
+        The cap matters because the heartbeat time comes from the webhook's clock.
+        If that clock ran ahead, the watermark would jump forward and every open
+        booking would look overdue, the same failure the webhook guards against
+        by rejecting future-dated events.
+        """
+        topic = self.settings.payments_topic
+        for r in parse_heartbeats(batch).where(F.col("topic") == topic).collect():
+            at = as_utc(r.emitted_at)
+            if r.partition not in self.heartbeats or at > self.heartbeats[r.partition]:
+                self.heartbeats[r.partition] = at
+            if r.partitions:
+                self.heartbeat_partitions = r.partitions
+        reached = heartbeat_watermark(self.heartbeats, self.heartbeat_partitions)
+        return None if reached is None else min(reached, self.clock())
 
     def _advance_watermark(self, newest_event_times: list) -> None:
         seen = [as_utc(t) for t in newest_event_times if t is not None]

@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "services", "webhook"))
-from app import create_app, sign  # noqa: E402
+from app import HeartbeatEmitter, create_app, heartbeat_records, sign  # noqa: E402
 
 SECRET = "test-secret"
 
@@ -108,3 +108,51 @@ def test_small_clock_skew_is_tolerated(client_and_producer):
     slightly_ahead = (datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat()
     assert post(client, event(occurred_at=slightly_ahead)).status_code == 202
     assert producer.sent[0][0] == "payments.raw"
+
+
+# ---------- heartbeats ----------
+
+class FakeKafka:
+    def __init__(self, partitions=3, fail=False):
+        self.partitions = partitions
+        self.fail = fail
+        self.sent = []
+
+    def partition_count(self, topic):
+        if self.fail:
+            raise RuntimeError("broker down")
+        return self.partitions
+
+    def send_to_partitions(self, topic, records):
+        self.sent.extend((topic, p, v) for p, v in records)
+
+
+def test_heartbeat_goes_to_every_partition_with_the_partition_count():
+    from datetime import datetime, timezone
+
+    at = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    kafka = FakeKafka(partitions=3)
+    assert HeartbeatEmitter(kafka, "payments.raw", 10, clock=lambda: at).beat() == 3
+    assert [(t, p) for t, p, _ in kafka.sent] == [("payments.raw", p) for p in range(3)]
+    assert all(v == {"type": "heartbeat", "emitted_at": "2026-01-01T12:00:00+00:00",
+                     "partition": p, "partitions": 3} for _, p, v in kafka.sent)
+
+
+def test_heartbeat_failure_is_logged_not_raised():
+    assert HeartbeatEmitter(FakeKafka(fail=True), "payments.raw", 10).beat_safely() is False
+    assert HeartbeatEmitter(FakeKafka(), "payments.raw", 10).beat_safely() is True
+
+
+def test_heartbeat_records_match_what_the_stream_parses(spark):
+    """The webhook's message shape and the stream's parser must agree."""
+    from datetime import datetime, timezone
+
+    from reconstream.parsing import parse_heartbeats, parse_payment_events
+
+    at = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    rows = [("payments.raw", p, json.dumps(v).encode(), at.replace(tzinfo=None))
+            for p, v in heartbeat_records(2, at)]
+    raw = spark.createDataFrame(rows, "topic string, partition int, value binary, timestamp timestamp")
+    got = {(r.partition, r.emitted_at, r.partitions) for r in parse_heartbeats(raw).collect()}
+    assert got == {(0, at.replace(tzinfo=None), 2), (1, at.replace(tzinfo=None), 2)}
+    assert parse_payment_events(raw).count() == 0, "a heartbeat is never a payment"

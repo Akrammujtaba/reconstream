@@ -14,7 +14,19 @@ So each micro-batch first lands data in Iceberg, then re-evaluates the affected 
 
 If Spark falls behind by 10 minutes, wall-clock "now" would make every booking confirmed in that window look unpaid, which is a flood of false alarms caused by our own lag. The watermark is the **newest event time seen minus 30 seconds of allowed lateness**. A booking is flagged only when the data itself shows the SLA has passed. `test_wall_clock_alone_does_not_trigger_timeouts` covers this.
 
-The trade-off: with no traffic the watermark stops, so timeouts wait for the next event. The nightly batch backstops that, and a per-partition heartbeat event would fix it in production.
+The trade-off: with no traffic the watermark stops, so timeouts wait for the next event. Heartbeats fix that (next question), and the nightly batch is still the backstop.
+
+### How do heartbeats keep the watermark moving without breaking event time?
+
+Every 10 seconds the webhook writes `{"type": "heartbeat", "emitted_at": ..., "partitions": 3}` into each partition of `payments.raw`. Kafka keeps order per partition, so once the stream reads a heartbeat stamped T from a partition, everything the webhook wrote there before T has been read too. That makes T a safe event time for that partition, even with no payments.
+
+- **Only per partition.** One partition can lag another (Spark splits `maxOffsetsPerTrigger` across partitions), so the stream takes the **oldest** of the newest heartbeats, and ignores heartbeats until every partition has sent one. A fast partition can't push the watermark past events still waiting in a slow one.
+- **Same lateness.** The heartbeat time goes through the same "minus 30 seconds" as real events. That also covers a request stamped just before a heartbeat but written just after it.
+- **Never ahead of us.** The heartbeat time is capped at the stream's own clock. A webhook clock running fast would otherwise make every open booking look overdue, which is why future-dated events are rejected too.
+- **Not data.** Heartbeats skip bronze and silver and don't count as input rows, so they don't trigger compaction. A heartbeat-only batch runs reconciliation only when the watermark actually moved, and then checks just the bookings whose deadline it crossed.
+- **Still event time.** If Spark falls behind, it reads old heartbeats with old timestamps, so lag still cannot create false timeouts.
+
+The limit: heartbeats prove the payments topic is caught up, not the Debezium bookings topic. If Debezium stalled, a booking change it hasn't delivered yet (say, a cancellation) could be judged on stale state. That was already true whenever real payment traffic moved the watermark, and the exception resolves once the change arrives or the nightly batch runs. Debezium's own `heartbeat.interval.ms` is the next step for that side.
 
 ### How is a duplicate *delivery* different from a duplicate *charge*?
 
@@ -106,4 +118,4 @@ The generator writes every injected fault to `audit.injected_faults`, with the t
 - Run compaction as its own scheduled job instead of inside the stream, so it never pauses detection.
 - Run on EMR Serverless or Kubernetes with checkpoints in S3 instead of local mode.
 - Move SLAs (already configurable per currency through an env var) and refund policy into a config table so they can differ per market or merchant.
-- Add a heartbeat event per Kafka partition so the watermark advances during quiet periods.
+- Add Debezium's own heartbeat so the bookings topic is covered too, not just payments.

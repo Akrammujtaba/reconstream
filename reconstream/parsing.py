@@ -89,3 +89,39 @@ def parse_payment_events(raw: DataFrame) -> DataFrame:
         .where("_rn = 1")
         .drop("_rn")
     )
+
+
+# Heartbeats: {"type": "heartbeat", "emitted_at": ..., "partition": p, "partitions": n}.
+# The webhook writes one into every partition of the payments topic every few
+# seconds, so the event-time watermark keeps moving when there is no real traffic.
+HEARTBEAT = "heartbeat"
+
+
+def is_heartbeat():
+    """True for heartbeat records. Real payment events and Debezium envelopes have
+    no top-level "type" of "heartbeat", so they are never matched."""
+    kind = F.get_json_object(F.col("value").cast("string"), "$.type")
+    return F.coalesce(kind == F.lit(HEARTBEAT), F.lit(False))
+
+
+def parse_heartbeats(raw: DataFrame) -> DataFrame:
+    """Newest heartbeat per (topic, partition) in this batch.
+
+    Kafka keeps order within a partition, so reading a heartbeat stamped T from
+    partition p means every event written to p before T has been read too. That
+    is only true per partition, which is why the partition comes from Kafka
+    metadata (where the record actually landed), not from the payload.
+    """
+    body = F.col("value").cast("string")
+    return (
+        raw.where(is_heartbeat())
+        .select(
+            "topic",
+            "partition",
+            F.to_timestamp(F.get_json_object(body, "$.emitted_at")).alias("emitted_at"),
+            F.get_json_object(body, "$.partitions").cast("int").alias("partitions"),
+        )
+        .where(F.col("emitted_at").isNotNull())
+        .groupBy("topic", "partition")
+        .agg(F.max("emitted_at").alias("emitted_at"), F.max("partitions").alias("partitions"))
+    )

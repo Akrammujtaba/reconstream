@@ -9,7 +9,11 @@ from memory_store import MemoryStore
 from reconstream.config import Settings
 from reconstream.lakehouse import file_stats_from_snapshot
 from reconstream.observability import StreamMetrics
-from reconstream.stream_processor import StreamProcessor, compaction_reason
+from reconstream.stream_processor import (
+    StreamProcessor,
+    compaction_reason,
+    heartbeat_watermark,
+)
 
 T0 = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
 BOOKINGS_TOPIC = "pg.public.bookings"
@@ -54,10 +58,18 @@ def payment(event_id, booking_id, at, payment_id="pay_1", amount=10000):
     return (PAYMENTS_TOPIC, value, at)
 
 
+def heartbeat(at, partition, partitions=3, topic=PAYMENTS_TOPIC):
+    value = {"type": "heartbeat", "emitted_at": iso(at), "partition": partition,
+             "partitions": partitions}
+    return (topic, value, at, partition)
+
+
 def batch(spark, records):
+    # A record is (topic, value, ts) or (topic, value, ts, partition); partition defaults to 0.
     rows = [
-        (topic, 0, next(_offset), None, json.dumps(v).encode(), ts.replace(tzinfo=None))
-        for topic, v, ts in records
+        (rec[0], rec[3] if len(rec) > 3 else 0, next(_offset), None,
+         json.dumps(rec[1]).encode(), rec[2].replace(tzinfo=None))
+        for rec in records
     ]
     return spark.createDataFrame(
         rows,
@@ -322,3 +334,87 @@ def test_opened_and_resolved_are_counted_per_type(spark):
         ("MISSING_PAYMENT", "resolved"): 1,
     }
     assert "changes_by_type" not in proc.last_stats  # kept out of the numeric log line
+
+
+# ---------- heartbeats: the watermark moves when traffic is quiet ----------
+
+def test_heartbeat_watermark_needs_every_partition_and_takes_the_oldest():
+    t = {0: T0 + timedelta(minutes=3), 1: T0 + timedelta(minutes=1)}
+    assert heartbeat_watermark(t, 3) is None, "partition 2 could still hold older events"
+    t[2] = T0 + timedelta(minutes=2)
+    assert heartbeat_watermark(t, 3) == T0 + timedelta(minutes=1)
+    assert heartbeat_watermark({}, 0) is None
+
+
+def test_quiet_period_without_heartbeats_waits_for_the_next_event(spark):
+    store, proc, clock = make(spark)
+    proc.process(batch(spark, [cdc("b1", "CONFIRMED", T0, lsn=1)]), 0)
+    clock.now = T0 + timedelta(minutes=10)
+    proc.process(batch(spark, []), 1)  # no traffic at all
+    assert store.e == {}, "the gap heartbeats fix: no events, so the deadline never passes"
+
+
+def test_heartbeats_alone_flag_a_missing_payment_in_a_quiet_period(spark):
+    store, proc, clock = make(spark)
+    proc.process(batch(spark, [cdc("b1", "CONFIRMED", T0, lsn=1)]), 0)
+
+    # No bookings or payments for 3 minutes, only heartbeats on all 3 partitions.
+    at = T0 + timedelta(minutes=3)
+    clock.now = at
+    proc.process(batch(spark, [heartbeat(at, p) for p in range(3)]), 1)
+
+    assert proc.watermark == at - timedelta(seconds=30)
+    assert exc(store, "b1")["MISSING_PAYMENT"]["status"] == "OPEN"
+    assert [a["booking_id"] for a in store.alerts] == ["b1"]
+    stats = proc.last_stats
+    assert stats["input_rows"] == 0 and stats["heartbeats"] == 3
+    assert stats["evaluated_bookings"] == 1
+
+
+def test_heartbeats_from_some_partitions_do_not_move_the_watermark(spark):
+    store, proc, clock = make(spark)
+    proc.process(batch(spark, [cdc("b1", "CONFIRMED", T0, lsn=1)]), 0)
+    at = T0 + timedelta(minutes=3)
+    clock.now = at
+    # Partition 2 is behind (no heartbeat yet): it may still hold b1's payment.
+    proc.process(batch(spark, [heartbeat(at, 0), heartbeat(at, 1)]), 1)
+    assert proc.watermark == T0 - timedelta(seconds=30)
+    assert store.e == {}
+
+    # Partition 2 catches up, but only to T0 + 1m: the watermark follows the slowest one.
+    proc.process(batch(spark, [heartbeat(T0 + timedelta(minutes=1), 2)]), 2)
+    assert proc.watermark == T0 + timedelta(seconds=30)
+    assert store.e == {}, "deadline is T0 + 2m; the slowest partition has not reached it"
+
+
+def test_heartbeats_are_not_data(spark):
+    store, proc, clock = make(spark, compact_every_batches=1)
+    at = T0 + timedelta(seconds=5)
+    hbs = [heartbeat(at, p) for p in range(3)]
+    proc.process(batch(spark, hbs), 0)
+    assert store.bronze_rows == 0 and store.p == {} and store.b == {}
+    assert getattr(store, "maintenance_runs", 0) == 0, "heartbeat-only batches don't count"
+
+    proc.process(batch(spark, [payment("e1", "b1", at), *hbs]), 1)
+    assert store.bronze_rows == 1, "only the real event lands in bronze"
+    assert list(store.p) == ["e1"]
+    assert proc.last_stats["input_rows"] == 1 and proc.last_stats["payment_events"] == 1
+
+
+def test_heartbeat_ahead_of_our_clock_is_capped(spark):
+    store, proc, clock = make(spark)
+    proc.process(batch(spark, [cdc("b1", "CONFIRMED", T0, lsn=1)]), 0)
+    # The webhook's clock is an hour fast. Trusting it would flag b1 right away.
+    clock.now = T0 + timedelta(seconds=10)
+    proc.process(batch(spark, [heartbeat(T0 + timedelta(hours=1), p) for p in range(3)]), 1)
+    assert proc.watermark == T0 + timedelta(seconds=10) - timedelta(seconds=30)
+    assert store.e == {}
+
+
+def test_heartbeats_on_the_bookings_topic_are_dropped_and_ignored(spark):
+    store, proc, clock = make(spark)
+    proc.process(batch(spark, [cdc("b1", "CONFIRMED", T0, lsn=1)]), 0)
+    clock.now = T0 + timedelta(minutes=3)
+    proc.process(batch(spark, [heartbeat(T0 + timedelta(minutes=3), p, topic=BOOKINGS_TOPIC)
+                               for p in range(3)]), 1)
+    assert store.e == {} and list(store.b) == ["b1"]
