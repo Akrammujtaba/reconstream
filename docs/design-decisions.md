@@ -103,6 +103,7 @@ The stream only re-checks bookings inside its 6-hour horizon, and only when even
 - **Contract failures** (bad currency, negative amount, missing field, unknown type) are not retryable, so they get a `400` and go to `payments.dlq` with the reason for someone to inspect, instead of disappearing.
 - **Kafka failures** are temporary, so the webhook returns `503`. The provider retries, and because the event keeps its `event_id`, the retry is harmless.
 - **The `202` is only sent after the broker acknowledges** (`acks=all`, idempotent producer), so an accepted event is never lost.
+- **Replaying dead letters** (`services/webhook/replay_dlq.py`): some rejects are a provider formatting slip, like `"currency": "usd"`. Leaving them out would later surface as a false `MISSING_PAYMENT`. The tool fixes a record only when *every* error on it belongs to one known fixer, checks the result against the same contract, and re-posts it **through the webhook** with a fresh signature rather than writing to Kafka. That way the replay gets the same validation and future-date check as live traffic. Re-running is safe because silver merges payments on `event_id`. Treating naive timestamps as UTC is a fixer too, but it is opt-in (`--fix naive_utc_timestamp`): a wrong zone guess would move event time by hours, so someone has to confirm it with the provider first.
 
 ### Why a JDBC catalog in Postgres instead of Hive Metastore or a REST catalog?
 

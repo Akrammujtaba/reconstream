@@ -3,3 +3,4 @@ uvicorn[standard]==0.32.1
 pydantic==2.10.4
 confluent-kafka==2.6.1
 prometheus-client==0.21.1
+httpx==0.28.1  # replay_dlq.py posts fixed events back to the webhook

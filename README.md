@@ -63,7 +63,7 @@ All tables are **Apache Iceberg** on S3 (SeaweedFS, an S3-compatible store, loca
 
 ## How it works
 
-1. **Capture.** Booking changes stream out of Postgres through Debezium (logical replication, ordered by LSN). Payment webhooks hit a FastAPI service that checks the HMAC signature and validates a strict contract. Bad payloads go to a dead-letter topic with the reason, and Kafka outages return `503` so the provider retries.
+1. **Capture.** Booking changes stream out of Postgres through Debezium (logical replication, ordered by LSN). Payment webhooks hit a FastAPI service that checks the HMAC signature and validates a strict contract. Bad payloads go to a dead-letter topic with the reason, and Kafka outages return `503` so the provider retries. `services/webhook/replay_dlq.py` re-posts dead letters that only failed on a known formatting slip (dry run by default).
 2. **Land.** Every 15 seconds Spark writes raw records to **bronze**, then MERGEs into **silver**. Bookings are upserted by key, and an older LSN never overwrites a newer one. Payments are insert-only on `event_id`, so redeliveries disappear.
 3. **Reconcile.** Spark re-checks only the bookings whose answer can have changed: ones that got new events in this batch, and ones whose SLA deadline just passed. Work per batch tracks batch size, not table size. Deadlines are judged on an **event-time watermark** (newest event seen minus 30s allowed lateness), not on when Spark happened to run. When traffic is quiet, the webhook writes a heartbeat into every `payments.raw` partition every 10 seconds (`HEARTBEAT_SECONDS`), so the watermark keeps moving and a missing payment is still flagged on time.
 4. **Track.** Results are diffed against stored exceptions and MERGEd into **gold** as new, still-open, resolved, or re-opened. Only new and re-opened exceptions alert (Kafka topic, plus Slack if configured). Each alert carries a `severity` (`critical` for a double charge, `high` for most, `medium` for an orphan payment) so a consumer can route it without a lookup.
@@ -154,7 +154,7 @@ docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
 
 ```bash
 pip install -r requirements-dev.txt     # needs Java 17 for local Spark
-pytest                                  # 124 tests
+pytest                                  # 134 tests
 cd dbt && dbt seed --target ci --profiles-dir . && dbt build --target ci --profiles-dir .
 ```
 
@@ -162,6 +162,7 @@ cd dbt && dbt seed --target ci --profiles-dir . && dbt build --target ci --profi
 - **Stream processor:** a multi-batch scenario where a missing payment is flagged on event time and then auto-resolved by a late payment; wall-clock lag that must not create false timeouts; restart recovery of the watermark; heartbeats flagging a missing payment with no other traffic, but only once every partition has caught up
 - **Generator to rules, end to end:** a simulated run's detections compared against the ground truth
 - **Webhook:** signature check, every contract violation going to the DLQ, Kafka outage returning `503`
+- **DLQ replay:** records the webhook dead-lettered are fixed only when every error matches a known fixer, then re-posted through the webhook; real errors and future-dated events stay put
 - **dbt:** 18 data tests on DuckDB fixtures, including SCD2 integrity and no booking left open as both `DUPLICATE_CHARGE` and `MISSING_PAYMENT`
 - **CI** (GitHub Actions): lint, unit tests, dbt build, Airflow DAG import, Docker build, Terraform validate
 
@@ -176,7 +177,7 @@ airflow/dags/         nightly reconciliation and maintenance DAGs
 dbt/                  staging, finance marts, snapshot, tests, CI fixtures
 evaluation/           scores the live pipeline against injected faults
 infra/                Postgres, Debezium, Spark, Airflow, Trino, Prometheus, Grafana, Terraform
-tests/                124 unit and scenario tests
+tests/                134 unit and scenario tests
 ```
 
 ## What's next
