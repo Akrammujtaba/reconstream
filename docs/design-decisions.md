@@ -105,6 +105,14 @@ The stream only re-checks bookings inside its 6-hour horizon, and only when even
 - **The `202` is only sent after the broker acknowledges** (`acks=all`, idempotent producer), so an accepted event is never lost.
 - **Replaying dead letters** (`services/webhook/replay_dlq.py`): some rejects are a provider formatting slip, like `"currency": "usd"`. Leaving them out would later surface as a false `MISSING_PAYMENT`. The tool fixes a record only when *every* error on it belongs to one known fixer, checks the result against the same contract, and re-posts it **through the webhook** with a fresh signature rather than writing to Kafka. That way the replay gets the same validation and future-date check as live traffic. Re-running is safe because silver merges payments on `event_id`. Treating naive timestamps as UTC is a fixer too, but it is opt-in (`--fix naive_utc_timestamp`): a wrong zone guess would move event time by hours, so someone has to confirm it with the provider first.
 
+### Why is `fct_recon_exceptions` incremental, and why the lookback?
+
+`gold.recon_exceptions` never deletes rows; resolved exceptions stay for history. A full rebuild re-reads and rewrites all of it every night to pick up one day of changes, and that cost keeps growing. So the mart is a dbt incremental model keyed on `exception_id` (`delete+insert`, which both dbt-trino and dbt-duckdb support).
+
+The filter is `last_evaluated_at`, because the gold MERGE sets it on every insert, update, and resolve. It can't be a strict "newer than the max already loaded", though. `evaluated_at` is stamped when a writer *starts* its batch, not when the MERGE commits, so a stream batch can stamp 10:00 and commit after the nightly batch already wrote 10:02. Those stream rows would be skipped forever. The model re-reads the last `recon_exceptions_lookback_minutes` (default 60) behind the max; reading a row twice is harmless since it replaces by key.
+
+The cost: rows outside the window are not re-joined to the seeds. After editing `exception_types.csv` or `fx_rates.csv`, or the first time this model runs on a table built by the old full-rebuild version (it lacks `last_evaluated_at`), run `dbt build --full-refresh -s fct_recon_exceptions`. `tests/test_dbt_incremental.py` runs dbt twice on DuckDB to check the change, the late commit, and that out-of-window rows really aren't re-read.
+
 ### Why a JDBC catalog in Postgres instead of Hive Metastore or a REST catalog?
 
 Spark and Trino both support Iceberg's JDBC catalog, and it reuses the Postgres that is already running. That means no extra service to operate locally. In AWS the same tables would use the Glue catalog, which `infra/terraform` provisions. One limitation: the JDBC catalog has no views, so dbt staging models are ephemeral (inlined as CTEs).

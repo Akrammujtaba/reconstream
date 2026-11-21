@@ -20,7 +20,7 @@ Planned improvements, roughly smallest first. Each one is a self-contained chang
 - [ ] **Bucket-partition `silver.payments` by `booking_id`** and measure the effect on batch duration with the evaluator.
 - [ ] **Move in-stream compaction to its own Airflow DAG** running every 15 minutes, and compare p95 latency before and after.
 - [x] **Dead-letter replay tool.** Read `payments.dlq`, fix a known class of error, and re-post to the webhook.
-- [ ] **dbt incremental model** for `fct_recon_exceptions` instead of a full rebuild.
+- [x] **dbt incremental model** for `fct_recon_exceptions` instead of a full rebuild.
 - [ ] **Trino queries for finance:** a `docs/queries.md` with five useful questions (open exposure by currency, slowest-to-resolve types, and so on).
 
 ## Larger

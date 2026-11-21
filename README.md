@@ -154,7 +154,7 @@ docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
 
 ```bash
 pip install -r requirements-dev.txt     # needs Java 17 for local Spark
-pytest                                  # 134 tests
+pytest                                  # 137 tests (3 need dbt-duckdb)
 cd dbt && dbt seed --target ci --profiles-dir . && dbt build --target ci --profiles-dir .
 ```
 
@@ -164,6 +164,7 @@ cd dbt && dbt seed --target ci --profiles-dir . && dbt build --target ci --profi
 - **Webhook:** signature check, every contract violation going to the DLQ, Kafka outage returning `503`
 - **DLQ replay:** records the webhook dead-lettered are fixed only when every error matches a known fixer, then re-posted through the webhook; real errors and future-dated events stay put
 - **dbt:** 18 data tests on DuckDB fixtures, including SCD2 integrity and no booking left open as both `DUPLICATE_CHARGE` and `MISSING_PAYMENT`
+- **dbt incremental:** `fct_recon_exceptions` is rebuilt from changed rows only; a pytest runs dbt twice on DuckDB and checks that resolves, new exceptions, and late-committing writes all land
 - **CI** (GitHub Actions): lint, unit tests, dbt build, Airflow DAG import, Docker build, Terraform validate
 
 ## Repository layout
@@ -177,7 +178,7 @@ airflow/dags/         nightly reconciliation and maintenance DAGs
 dbt/                  staging, finance marts, snapshot, tests, CI fixtures
 evaluation/           scores the live pipeline against injected faults
 infra/                Postgres, Debezium, Spark, Airflow, Trino, Prometheus, Grafana, Terraform
-tests/                134 unit and scenario tests
+tests/                137 unit and scenario tests
 ```
 
 ## What's next
