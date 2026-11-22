@@ -38,9 +38,9 @@ jobs:
       - run: mkdir -p target
       - run: dbt seed --target ci --profiles-dir .
       - run: dbt build --target ci --profiles-dir .
-      - name: Incremental fct_recon_exceptions (second run picks up changes)
+      - name: Incremental fct_recon_exceptions and docs/queries.md SQL
         working-directory: .
-        run: pip install pytest==8.3.4 && pytest tests/test_dbt_incremental.py
+        run: pip install pytest==8.3.4 && pytest tests/test_dbt_incremental.py tests/test_finance_queries.py
 
   airflow-dags:
     runs-on: ubuntu-latest
