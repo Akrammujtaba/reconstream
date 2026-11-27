@@ -28,3 +28,9 @@ Planned improvements, roughly smallest first. Each one is a self-contained chang
 - [ ] **Deploy the Spark jobs to EMR Serverless** using `infra/terraform`, with the Glue catalog instead of the JDBC catalog.
 - [ ] **Load test at 20 bookings/sec** and document where the bottleneck moves.
 - [ ] **Replace polling in the evaluator with a scheduled Airflow DAG** that writes results to an Iceberg table and a Grafana panel.
+
+## Next (added once the local items above were done)
+
+- [x] **Aging report for open exceptions.** A dbt mart with open exposure by type and age bucket (0-1h, 1-24h, 1-7d, 7d+), aged to one shared "as of" so rows the stream hasn't re-checked lately don't look younger than they are. Pin the bucket edges with a dbt unit test.
+- [ ] **Fail fast on bad numeric settings.** `RECON_SLA_MINUTES=0` would flag every confirmed booking at once, and a negative `RECON_ALLOWED_LATENESS_SECONDS` would put the watermark ahead of the data. Validate every numeric env var at startup like the SLA overrides already are, with a test per setting.
+- [ ] **Publish a JSON Schema for `recon.alerts`.** Consumers (pager, Slack router) need a contract. Add `docs/alert.schema.json` and a test that every message from `alert_messages` validates against it, so a renamed field breaks CI, not a consumer.

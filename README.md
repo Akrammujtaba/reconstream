@@ -146,7 +146,7 @@ docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
   --bootstrap-server kafka:9092 --topic recon.alerts
 ```
 
-**Run the nightly pipeline now:** in Airflow, trigger `reconstream_nightly` with config `{"full": true}`. This runs batch reconciliation, Great Expectations, and dbt. After it finishes, `lake.marts.fct_daily_reconciliation` holds the finance view.
+**Run the nightly pipeline now:** in Airflow, trigger `reconstream_nightly` with config `{"full": true}`. This runs batch reconciliation, Great Expectations, and dbt. After it finishes, `lake.marts.fct_daily_reconciliation` holds the finance view, and `lake.marts.fct_open_exception_aging` shows open exposure by type and age (0-1h, 1-24h, 1-7d, 7d+).
 
 **Measure it:** `docker compose run --rm evaluator`
 
@@ -165,7 +165,7 @@ cd dbt && dbt seed --target ci --profiles-dir . && dbt build --target ci --profi
 - **Generator to rules, end to end:** a simulated run's detections compared against the ground truth
 - **Webhook:** signature check, every contract violation going to the DLQ, Kafka outage returning `503`
 - **DLQ replay:** records the webhook dead-lettered are fixed only when every error matches a known fixer, then re-posted through the webhook; real errors and future-dated events stay put
-- **dbt:** 18 data tests on DuckDB fixtures, including SCD2 integrity and no booking left open as both `DUPLICATE_CHARGE` and `MISSING_PAYMENT`
+- **dbt:** 23 data tests on DuckDB fixtures, including SCD2 integrity and no booking left open as both `DUPLICATE_CHARGE` and `MISSING_PAYMENT`, plus a dbt unit test pinning the aging buckets in `fct_open_exception_aging` at their exact edges
 - **Finance queries:** every query in `docs/queries.md` runs unchanged on the DuckDB fixtures and is checked against hand-computed answers, so the docs break the build instead of breaking for finance
 - **dbt incremental:** `fct_recon_exceptions` is rebuilt from changed rows only; a pytest runs dbt twice on DuckDB and checks that resolves, new exceptions, and late-committing writes all land
 - **CI** (GitHub Actions): lint, unit tests, dbt build, Airflow DAG import, Docker build, Terraform validate

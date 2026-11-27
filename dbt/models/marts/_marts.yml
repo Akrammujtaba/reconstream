@@ -33,3 +33,48 @@ models:
 
   - name: dim_booking_status_history
     description: SCD2 history of booking status and amount.
+
+  - name: fct_open_exception_aging
+    description: >
+      Open exceptions by type and age bucket (0-1h, 1-24h, 1-7d, 7d+), with USD
+      exposure. Every row is aged to the same point, the newest last_evaluated_at
+      in fct_recon_exceptions, so rows the stream hasn't re-checked lately don't
+      look younger than they are.
+    columns:
+      - name: exception_type
+        data_tests: [not_null]
+      - name: age_bucket
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['0-1h', '1-24h', '1-7d', '7d+']
+      - name: open_exceptions
+        data_tests: [not_null]
+      - name: at_risk_usd
+        data_tests: [not_null]
+
+unit_tests:
+  - name: aging_uses_one_as_of_and_lower_inclusive_buckets
+    description: >
+      as_of comes from the newest last_evaluated_at in the table, even when that
+      row is resolved. Resolved rows are not counted. An open row whose own
+      last_evaluated_at is stale (b) is still aged to the shared as_of. Edges:
+      3599 s is 0-1h, exactly 3600 s is 1-24h, 1 day is 1-7d, 7 days is 7d+.
+    model: fct_open_exception_aging
+    given:
+      - input: ref('fct_recon_exceptions')
+        rows:
+          - {exception_type: MISSING_PAYMENT, severity: high, owner_team: payments-ops, status: RESOLVED, amount_at_risk_usd: 999.0, first_detected_at: "2026-01-10 11:59:00", last_evaluated_at: "2026-01-10 12:00:00"}
+          - {exception_type: MISSING_PAYMENT, severity: high, owner_team: payments-ops, status: OPEN, amount_at_risk_usd: 10.0, first_detected_at: "2026-01-10 11:00:01", last_evaluated_at: "2026-01-10 11:00:01"}
+          - {exception_type: MISSING_PAYMENT, severity: high, owner_team: payments-ops, status: OPEN, amount_at_risk_usd: 20.0, first_detected_at: "2026-01-10 11:00:00", last_evaluated_at: "2026-01-10 11:00:00"}
+          - {exception_type: MISSING_PAYMENT, severity: high, owner_team: payments-ops, status: OPEN, amount_at_risk_usd: 5.5, first_detected_at: "2026-01-09 12:00:00", last_evaluated_at: "2026-01-10 02:00:00"}
+          - {exception_type: MISSING_PAYMENT, severity: high, owner_team: payments-ops, status: OPEN, amount_at_risk_usd: 1.25, first_detected_at: "2026-01-03 12:00:00", last_evaluated_at: "2026-01-10 02:00:00"}
+          - {exception_type: MISSING_PAYMENT, severity: high, owner_team: payments-ops, status: OPEN, amount_at_risk_usd: 2.0, first_detected_at: "2026-01-01 00:00:00", last_evaluated_at: "2026-01-10 02:00:00"}
+          - {exception_type: DUPLICATE_CHARGE, severity: critical, owner_team: payments-ops, status: OPEN, amount_at_risk_usd: 100.0, first_detected_at: "2026-01-10 11:30:00", last_evaluated_at: "2026-01-10 11:30:00"}
+    expect:
+      rows:
+        - {exception_type: MISSING_PAYMENT, severity: high, owner_team: payments-ops, age_bucket_order: 1, age_bucket: "0-1h", open_exceptions: 1, at_risk_usd: 10.0, oldest_detected_at: "2026-01-10 11:00:01", max_age_seconds: 3599, as_of: "2026-01-10 12:00:00"}
+        - {exception_type: MISSING_PAYMENT, severity: high, owner_team: payments-ops, age_bucket_order: 2, age_bucket: "1-24h", open_exceptions: 1, at_risk_usd: 20.0, oldest_detected_at: "2026-01-10 11:00:00", max_age_seconds: 3600, as_of: "2026-01-10 12:00:00"}
+        - {exception_type: MISSING_PAYMENT, severity: high, owner_team: payments-ops, age_bucket_order: 3, age_bucket: "1-7d", open_exceptions: 1, at_risk_usd: 5.5, oldest_detected_at: "2026-01-09 12:00:00", max_age_seconds: 86400, as_of: "2026-01-10 12:00:00"}
+        - {exception_type: MISSING_PAYMENT, severity: high, owner_team: payments-ops, age_bucket_order: 4, age_bucket: "7d+", open_exceptions: 2, at_risk_usd: 3.25, oldest_detected_at: "2026-01-01 00:00:00", max_age_seconds: 820800, as_of: "2026-01-10 12:00:00"}
+        - {exception_type: DUPLICATE_CHARGE, severity: critical, owner_team: payments-ops, age_bucket_order: 1, age_bucket: "0-1h", open_exceptions: 1, at_risk_usd: 100.0, oldest_detected_at: "2026-01-10 11:30:00", max_age_seconds: 1800, as_of: "2026-01-10 12:00:00"}

@@ -63,7 +63,9 @@ with DAG(
 
     dbt_build = BashOperator(
         task_id="dbt_build",
-        bash_command=DBT.format(cmd="build"),
+        # dbt unit tests check model logic on fixed rows; that is CI's job, and
+        # re-running them against production Trino every night proves nothing new.
+        bash_command=DBT.format(cmd="build --exclude-resource-type unit_test"),
     )
 
     batch_reconcile >> quality_checks >> dbt_build

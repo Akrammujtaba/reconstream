@@ -113,6 +113,14 @@ The filter is `last_evaluated_at`, because the gold MERGE sets it on every inser
 
 The cost: rows outside the window are not re-joined to the seeds. After editing `exception_types.csv` or `fx_rates.csv`, or the first time this model runs on a table built by the old full-rebuild version (it lacks `last_evaluated_at`), run `dbt build --full-refresh -s fct_recon_exceptions`. `tests/test_dbt_incremental.py` runs dbt twice on DuckDB to check the change, the late commit, and that out-of-window rows really aren't re-read.
 
+### How old is an open exception, and why not use `seconds_open` for that?
+
+`fct_open_exception_aging` groups open exceptions by type and age bucket (0-1h, 1-24h, 1-7d, 7d+) with USD exposure, like an accounts-receivable aging report. Money stuck for a week needs a different conversation than money stuck for ten minutes.
+
+`seconds_open` can't drive it. For an open exception it runs up to that row's own `last_evaluated_at`, and the stream only re-evaluates bookings that got new events or just hit a deadline. An untouched open exception keeps an old `last_evaluated_at` until the nightly batch re-checks everything, so its `seconds_open` stops growing and the oldest problems would look the youngest. The mart instead ages every row to one shared point: the newest `last_evaluated_at` in the whole table, which is how far the data is known to be current. Not `current_timestamp`, so a rebuild with no new data gives the same answer, and a stalled pipeline doesn't age exceptions it may already have resolved without telling us.
+
+The bucket edges are lower-inclusive (exactly one hour is `1-24h`). A dbt unit test pins each edge with fixed rows, including an open row with a stale `last_evaluated_at` and a resolved row that sets the "as of" but isn't counted. The nightly DAG skips unit tests (`--exclude-resource-type unit_test`); they run in CI, where they belong.
+
 ### Why a JDBC catalog in Postgres instead of Hive Metastore or a REST catalog?
 
 Spark and Trino both support Iceberg's JDBC catalog, and it reuses the Postgres that is already running. That means no extra service to operate locally. In AWS the same tables would use the Glue catalog, which `infra/terraform` provisions. One limitation: the JDBC catalog has no views, so dbt staging models are ephemeral (inlined as CTEs).
